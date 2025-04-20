@@ -5,24 +5,131 @@ import tkinter.font as tkFont  # Import font module for font handling
 
 class SQLVM:
     def __init__(self):
-        self.tables = {}
+        self.databases = {}  # { db_name: {table_name: ...} }
+        self.current_db = None
+        self.tables = {}  # For backward compatibility, but now always points to current db's tables
 
-    def create_table(self, table_name, columns):
-        if (table_name in self.tables):
+    def create_database(self, db_name):
+        if db_name in self.databases:
+            return f"Error: Database {db_name} already exists."
+        self.databases[db_name] = {}
+        return f"Database {db_name} created."
+
+    def drop_database(self, db_name, if_exists=False):
+        if db_name not in self.databases:
+            if if_exists:
+                return f"Database {db_name} does not exist. Skipped."
+            return f"Error: Database {db_name} does not exist."
+        del self.databases[db_name]
+        if self.current_db == db_name:
+            self.current_db = None
+            self.tables = {}
+        return f"Database {db_name} dropped."
+
+    def use_database(self, db_name):
+        if db_name not in self.databases:
+            return f"Error: Database {db_name} does not exist."
+        self.current_db = db_name
+        self.tables = self.databases[db_name]
+        return f"Using database {db_name}."
+
+    def show_databases(self):
+        if not self.databases:
+            return "No databases found."
+        dbs = sorted(self.databases.keys())
+        # Format as a simple table
+        maxlen = max(len("Database"), *(len(db) for db in dbs))
+        header = "| " + "Database".ljust(maxlen) + " |"
+        sep = "+" + "-" * (maxlen + 2) + "+"
+        rows = [f"| {db.ljust(maxlen)} |" for db in dbs]
+        return sep + "\n" + header + "\n" + sep + "\n" + "\n".join(rows) + "\n" + sep
+
+    def show_tables(self):
+        if self.current_db is None:
+            return "Error: No database selected. Use USE database_name;"
+        if not self.tables:
+            return "No tables found in current database."
+        tbls = sorted(self.tables.keys())
+        maxlen = max(len("Table"), *(len(t) for t in tbls))
+        header = "| " + "Table".ljust(maxlen) + " |"
+        sep = "+" + "-" * (maxlen + 2) + "+"
+        rows = [f"| {t.ljust(maxlen)} |" for t in tbls]
+        return sep + "\n" + header + "\n" + sep + "\n" + "\n".join(rows) + "\n" + sep
+
+    def _parse_column_definitions(self, columns_def):
+        """
+        Parse column definitions like: col1 INT, col2 TEXT, col3 FLOAT
+        Returns: (columns, types) where columns is a list of names, types is a dict {col: type}
+        """
+        columns = []
+        types = {}
+        for coldef in columns_def.split(","):
+            parts = coldef.strip().split()
+            if len(parts) == 1:
+                col, typ = parts[0], "TEXT"
+            else:
+                col, typ = parts[0], parts[1].upper()
+            columns.append(col)
+            types[col] = typ
+        return columns, types
+
+    def _convert_value(self, value, typ):
+        """
+        Convert string value to the given SQL type.
+        """
+        if typ in ("TEXT", "CHAR", "VARCHAR"):
+            return str(value)
+        elif typ == "INT":
+            try:
+                return int(value)
+            except Exception:
+                raise ValueError(f"Invalid INT value: {value}")
+        elif typ == "FLOAT":
+            try:
+                return float(value)
+            except Exception:
+                raise ValueError(f"Invalid FLOAT value: {value}")
+        elif typ == "BOOL":
+            if str(value).lower() in ("1", "true", "yes", "on"):
+                return True
+            elif str(value).lower() in ("0", "false", "no", "off"):
+                return False
+            else:
+                raise ValueError(f"Invalid BOOL value: {value}")
+        else:
+            return str(value)
+
+    def create_table(self, table_name, columns_def):
+        if self.current_db is None:
+            return "Error: No database selected. Use USE database_name;"
+        if table_name in self.tables:
             return f"Error: Table {table_name} already exists."
-        self.tables[table_name] = {"columns": columns, "rows": []}
-        return f"Table {table_name} created with columns {columns}."
+        columns, types = self._parse_column_definitions(", ".join(columns_def) if isinstance(columns_def, list) else columns_def)
+        self.tables[table_name] = {"columns": columns, "types": types, "rows": []}
+        return f"Table {table_name} created with columns {[(c, types[c]) for c in columns]}."
 
     def insert(self, table_name, values):
+        if self.current_db is None:
+            return "Error: No database selected. Use USE database_name;"
         if table_name not in self.tables:
             return f"Error: Table {table_name} does not exist."
         table = self.tables[table_name]
-        if len(values) != len(table["columns"]):
+        columns = table["columns"]
+        types = table.get("types", {c: "TEXT" for c in columns})
+        if len(values) != len(columns):
             return f"Error: Number of values doesn't match columns."
-        table["rows"].append(dict(zip(table["columns"], values)))
+        row = {}
+        for col, val in zip(columns, values):
+            try:
+                row[col] = self._convert_value(val, types.get(col, "TEXT"))
+            except Exception as e:
+                return f"Error: {e}"
+        table["rows"].append(row)
         return f"Inserted {values} into {table_name}."
 
     def select(self, table_name, columns="*"):
+        if self.current_db is None:
+            return "Error: No database selected. Use USE database_name;"
         if table_name not in self.tables:
             return f"Error: Table {table_name} does not exist."
         table = self.tables[table_name]
@@ -61,13 +168,20 @@ class SQLVM:
         return result
 
     def update(self, table_name, set_values, where=None):
+        if self.current_db is None:
+            return "Error: No database selected. Use USE database_name;"
         if table_name not in self.tables:
             return f"Error: Table {table_name} does not exist."
         table = self.tables[table_name]
+        types = table.get("types", {c: "TEXT" for c in table["columns"]})
         set_dict = {}
         set_pairs = re.findall(r'(\w+)\s*=\s*(?:"([^"]*)"|([^",\s]+))', set_values)
         for col, val1, val2 in set_pairs:
-            set_dict[col] = val1 if val1 else val2  # Pick non-empty match
+            value = val1 if val1 else val2
+            try:
+                set_dict[col] = self._convert_value(value, types.get(col, "TEXT"))
+            except Exception as e:
+                return f"Error: {e}"
 
         updated_count = 0
         for row in table["rows"]:
@@ -79,6 +193,8 @@ class SQLVM:
         return f"Updated {updated_count} row/s in {table_name}."
 
     def delete(self, table_name, where=None):
+        if self.current_db is None:
+            return "Error: No database selected. Use USE database_name;"
         if table_name not in self.tables:
             return f"Error: Table {table_name} does not exist."
         table = self.tables[table_name]
@@ -91,23 +207,73 @@ class SQLVM:
         col, value = condition.split("=")
         col = col.strip()
         value = value.strip().strip('"')
+        typ = None
+        for table in self.tables.values():
+            if "types" in table and col in table["types"]:
+                typ = table["types"][col]
+                break
+        if typ:
+            try:
+                value = self._convert_value(value, typ)
+            except Exception:
+                pass
         return row.get(col) == value
 
     def execute_command(self, command):
+        command = command.strip().rstrip(";")  # Remove trailing semicolon if present
         parts = command.split(" ", 1)
         cmd = parts[0].upper()
 
+        # Database commands
         if cmd == "CREATE":
-            match = re.match(r"CREATE TABLE (\w+) \((.+)\)", command)
+            # CREATE DATABASE
+            match_db = re.match(r"CREATE DATABASE (\w+)", command, re.IGNORECASE)
+            if match_db:
+                db_name = match_db.group(1)
+                return self.create_database(db_name)
+            # CREATE TABLE
+            match = re.match(r"CREATE TABLE (\w+) \((.+)\)", command, re.IGNORECASE)
             if match:
                 table_name = match.group(1)
-                columns = [col.strip() for col in match.group(2).split(",")]
-                return self.create_table(table_name, columns)
+                columns_def = match.group(2)
+                return self.create_table(table_name, columns_def)
+        elif cmd == "DROP":
+            # DROP DATABASE [IF EXISTS] db_name
+            match = re.match(r"DROP DATABASE(?: IF EXISTS)? (\w+)", command, re.IGNORECASE)
+            if match:
+                db_name = match.group(1)
+                if_exists = "IF EXISTS" in command.upper()
+                return self.drop_database(db_name, if_exists)
+        elif cmd == "USE":
+            # USE db_name
+            match = re.match(r"USE (\w+)", command, re.IGNORECASE)
+            if match:
+                db_name = match.group(1)
+                return self.use_database(db_name)
+        elif cmd == "SHOW":
+            # SHOW DATABASES
+            if command.upper() == "SHOW DATABASES":
+                return self.show_databases()
+            # SHOW TABLES
+            if command.upper() == "SHOW TABLES":
+                return self.show_tables()
         elif cmd == "INSERT":
             match = re.match(r"INSERT INTO (\w+) VALUES \((.+)\)", command)
             if match:
                 table_name = match.group(1)
-                values = [value.strip().strip('"') for value in match.group(2).split(",")]
+                values_str = match.group(2)
+                # Improved value splitting: handles quoted strings, numbers, booleans
+                pattern = r'''
+                    "([^"]*)"           # double-quoted string
+                    |                   # or
+                    ([^,\s][^,]*)       # unquoted value (numbers, booleans, etc.)
+                '''
+                values = []
+                for m in re.finditer(pattern, values_str, re.VERBOSE):
+                    if m.group(1) is not None:
+                        values.append(m.group(1))
+                    elif m.group(2) is not None:
+                        values.append(m.group(2).strip())
                 return self.insert(table_name, values)
         elif cmd == "SELECT":
             match = re.match(r"SELECT (.+) FROM (\w+)", command)
@@ -248,7 +414,12 @@ class SQLGUI:
         """Displays the help instructions."""
         help_text = (
             "SQLVM Help:\n"
-            "- CREATE TABLE table_name (col1, col2, ...)\n"
+            "- CREATE DATABASE database_name\n"
+            "- DROP DATABASE [IF EXISTS] database_name\n"
+            "- USE database_name\n"
+            "- SHOW DATABASES\n"
+            "- SHOW TABLES\n"
+            "- CREATE TABLE table_name (col1 TYPE, col2 TYPE, ...)\n"
             "- INSERT INTO table_name VALUES (val1, val2, ...)\n"
             "- SELECT * FROM table_name\n"
             "- UPDATE table_name SET col=value WHERE condition\n"
@@ -270,7 +441,7 @@ class SQLGUI:
             "Dantes, Joshua Gabriel P.\n"
             "Villanueva, Jasper P.\n\n"
             "An in-memory SQL-like Virtual Machine. For educational purposes.\n"
-            "Supports basic SQL commands: CREATE, INSERT, SELECT, UPDATE, DELETE.\n"
+            "Supports basic SQL commands: CREATE DATABASE, DROP DATABASE, USE, SHOW DATABASES, SHOW TABLES, CREATE, INSERT, SELECT, UPDATE, DELETE.\n"
             "Developed using Python and Tkinter for GUI.\n\n"
         )
         messagebox.showinfo("About", about_text)
