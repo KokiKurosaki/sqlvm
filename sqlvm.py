@@ -59,19 +59,28 @@ class SQLVM:
     def _parse_column_definitions(self, columns_def):
         """
         Parse column definitions like: col1 INT, col2 TEXT, col3 FLOAT
-        Returns: (columns, types) where columns is a list of names, types is a dict {col: type}
+        Returns: (columns, types, auto_increment_cols) where columns is a list of names, 
+        types is a dict {col: type}, and auto_increment_cols is a list of auto-increment column names
         """
         columns = []
         types = {}
+        auto_increment_cols = []
         for coldef in columns_def.split(","):
             parts = coldef.strip().split()
             if len(parts) == 1:
                 col, typ = parts[0], "TEXT"
+                auto_increment = False
             else:
-                col, typ = parts[0], parts[1].upper()
+                col = parts[0]
+                typ = parts[1].upper()
+                auto_increment = "AUTO_INCREMENT" in [p.upper() for p in parts[2:]] if len(parts) > 2 else False
+            
             columns.append(col)
             types[col] = typ
-        return columns, types
+            if auto_increment:
+                auto_increment_cols.append(col)
+        
+        return columns, types, auto_increment_cols
 
     def _convert_value(self, value, typ):
         """
@@ -104,8 +113,13 @@ class SQLVM:
             return "Error: No database selected. Use USE database_name;"
         if table_name in self.tables:
             return f"Error: Table {table_name} already exists."
-        columns, types = self._parse_column_definitions(", ".join(columns_def) if isinstance(columns_def, list) else columns_def)
-        self.tables[table_name] = {"columns": columns, "types": types, "rows": []}
+        columns, types, auto_increment_cols = self._parse_column_definitions(", ".join(columns_def) if isinstance(columns_def, list) else columns_def)
+        self.tables[table_name] = {
+            "columns": columns, 
+            "types": types, 
+            "rows": [],
+            "auto_increment": {col: 0 for col in auto_increment_cols}
+        }
         return f"Table {table_name} created with columns {[(c, types[c]) for c in columns]}."
 
     def insert(self, table_name, values):
@@ -116,16 +130,44 @@ class SQLVM:
         table = self.tables[table_name]
         columns = table["columns"]
         types = table.get("types", {c: "TEXT" for c in columns})
+        auto_increment = table.get("auto_increment", {})
+        
+        # Handle case when auto-increment columns are omitted
+        if len(values) != len(columns) and len(values) == len([c for c in columns if c not in auto_increment]):
+            # The values match the number of non-auto-increment columns
+            values_with_auto = []
+            value_index = 0
+            for col in columns:
+                if col in auto_increment:
+                    values_with_auto.append(None)  # Placeholder for auto-increment
+                else:
+                    values_with_auto.append(values[value_index])
+                    value_index += 1
+            values = values_with_auto
+        
         if len(values) != len(columns):
             return f"Error: Number of values doesn't match columns."
+        
+        # Create a list to store display values (with actual auto-increment values)
+        display_values = []
         row = {}
         for col, val in zip(columns, values):
-            try:
-                row[col] = self._convert_value(val, types.get(col, "TEXT"))
-            except Exception as e:
-                return f"Error: {e}"
+            if col in auto_increment and (val is None or val == "NULL"):
+                # Handle auto-increment value
+                table["auto_increment"][col] += 1
+                auto_value = table["auto_increment"][col]
+                row[col] = auto_value
+                display_values.append(auto_value)  # Store the actual value for display
+            else:
+                try:
+                    converted_val = self._convert_value(val, types.get(col, "TEXT"))
+                    row[col] = converted_val
+                    display_values.append(converted_val)  # Use converted value for display
+                except Exception as e:
+                    return f"Error: {e}"
+        
         table["rows"].append(row)
-        return f"Inserted {values} into {table_name}."
+        return f"Inserted {display_values} into {table_name}."
 
     def select(self, table_name, columns="*"):
         if self.current_db is None:
