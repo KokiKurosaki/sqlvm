@@ -1,6 +1,6 @@
 import tkinter as tk
-from sqlvm import SQLVM
-from gui import SQLGUI
+from .sqlvm import SQLVM
+from .gui import SQLGUI
 
 def main():
     # Create an instance of the SQL Virtual Machine

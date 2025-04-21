@@ -56,28 +56,44 @@ class SQLVM:
     def _parse_column_definitions(self, columns_def):
         """
         Parse column definitions like: col1 INT, col2 TEXT, col3 FLOAT
-        Returns: (columns, types, auto_increment_cols) where columns is a list of names, 
-        types is a dict {col: type}, and auto_increment_cols is a list of auto-increment column names
+        Returns: (columns, types, auto_increment_cols, indexes) where columns is a list of names, 
+        types is a dict {col: type}, auto_increment_cols is a list of auto-increment column names,
+        and indexes is a dict mapping column names to their index types
         """
         columns = []
         types = {}
         auto_increment_cols = []
+        indexes = {}
+        
         for coldef in columns_def.split(","):
             parts = coldef.strip().split()
             if len(parts) == 1:
                 col, typ = parts[0], "TEXT"
                 auto_increment = False
+                index_type = None
             else:
                 col = parts[0]
                 typ = parts[1].upper()
                 auto_increment = "AUTO_INCREMENT" in [p.upper() for p in parts[2:]] if len(parts) > 2 else False
+                # Check for index types
+                index_options = ["PRIMARY", "UNIQUE", "INDEX", "FULLTEXT", "SPATIAL"]
+                index_type = None
+                for idx_type in index_options:
+                    if idx_type in [p.upper() for p in parts[2:]]:
+                        index_type = idx_type
+                        break
             
             columns.append(col)
             types[col] = typ
             if auto_increment:
                 auto_increment_cols.append(col)
+                # Make AUTO_INCREMENT columns PRIMARY KEY by default if no other index type specified
+                if not index_type and typ.upper() == "INT":
+                    index_type = "PRIMARY"
+            if index_type:
+                indexes[col] = index_type
         
-        return columns, types, auto_increment_cols
+        return columns, types, auto_increment_cols, indexes
 
     def _convert_value(self, value, typ):
         """
@@ -110,16 +126,43 @@ class SQLVM:
             return "Error: No database selected. Use USE database_name;"
         if table_name in self.tables:
             return f"Error: Table {table_name} already exists."
-        columns, types, auto_increment_cols = self._parse_column_definitions(", ".join(columns_def) if isinstance(columns_def, list) else columns_def)
+        
+        columns, types, auto_increment_cols, indexes = self._parse_column_definitions(", ".join(columns_def) if isinstance(columns_def, list) else columns_def)
+        
+        # Check that there's only one AUTO_INCREMENT column
+        if len(auto_increment_cols) > 1:
+            return "Error: Incorrect table definition; there can be only one auto column and it must be defined as a key"
+        
+        # Check that AUTO_INCREMENT column is defined as a key (PRIMARY, UNIQUE or INDEX)
+        if auto_increment_cols and auto_increment_cols[0] not in indexes:
+            return "Error: Incorrect table definition; there can be only one auto column and it must be defined as a key"
+            
+        # Validate indexes - check for multiple PRIMARY KEYs
+        primary_keys = [col for col, idx_type in indexes.items() if idx_type == "PRIMARY"]
+        if len(primary_keys) > 1:
+            return f"Error: Multiple PRIMARY KEY definitions. A table can have only one primary key."
+        
         self.tables[table_name] = {
             "columns": columns, 
             "types": types, 
             "rows": [],
-            "auto_increment": {col: 0 for col in auto_increment_cols}
+            "auto_increment": {col: 0 for col in auto_increment_cols},
+            "indexes": indexes
         }
-        return f"Table {table_name} created with columns {[(c, types[c]) for c in columns]}."
+        
+        # Format the column definitions for display
+        col_defs = []
+        for col in columns:
+            col_def = f"{col} {types[col]}"
+            if col in auto_increment_cols:
+                col_def += " AUTO_INCREMENT"
+            if col in indexes:
+                col_def += f" {indexes[col]}"
+            col_defs.append(col_def)
+            
+        return f"Table {table_name} created with columns: {', '.join(col_defs)}."
 
-    def insert(self, table_name, values):
+    def insert(self, table_name, values, specified_columns=None):
         if self.current_db is None:
             return "Error: No database selected. Use USE database_name;"
         if table_name not in self.tables:
@@ -128,6 +171,27 @@ class SQLVM:
         columns = table["columns"]
         types = table.get("types", {c: "TEXT" for c in columns})
         auto_increment = table.get("auto_increment", {})
+        indexes = table.get("indexes", {})
+        
+        # Handle case when columns are explicitly specified
+        if specified_columns:
+            # Create a mapping to match specified columns to their positions
+            column_mapping = {}
+            for i, col in enumerate(columns):
+                column_mapping[col] = i
+                
+            # Create an array with None values initially
+            full_values = [None] * len(columns)
+            
+            # Fill in the values for the specified columns
+            for i, col in enumerate(specified_columns):
+                if i < len(values):
+                    # Check if column exists
+                    if col not in column_mapping:
+                        return f"Error: Unknown column '{col}' in field list"
+                    full_values[column_mapping[col]] = values[i]
+            
+            values = full_values
         
         # Handle case when auto-increment columns are omitted
         if len(values) != len(columns) and len(values) == len([c for c in columns if c not in auto_increment]):
@@ -145,25 +209,40 @@ class SQLVM:
         if len(values) != len(columns):
             return f"Error: Number of values doesn't match columns."
         
-        # Create a list to store display values (with actual auto-increment values)
+        # Create a dictionary to store the new row values
+        new_row = {}
         display_values = []
-        row = {}
+        
+        # First pass: convert values and handle auto-increment
         for col, val in zip(columns, values):
             if col in auto_increment and (val is None or val == "NULL"):
                 # Handle auto-increment value
                 table["auto_increment"][col] += 1
                 auto_value = table["auto_increment"][col]
-                row[col] = auto_value
-                display_values.append(auto_value)  # Store the actual value for display
+                new_row[col] = auto_value
+                display_values.append(auto_value)
             else:
                 try:
                     converted_val = self._convert_value(val, types.get(col, "TEXT"))
-                    row[col] = converted_val
-                    display_values.append(converted_val)  # Use converted value for display
+                    new_row[col] = converted_val
+                    display_values.append(converted_val)
                 except Exception as e:
                     return f"Error: {e}"
         
-        table["rows"].append(row)
+        # Second pass: check index constraints
+        for col, index_type in indexes.items():
+            if index_type in ["PRIMARY", "UNIQUE"]:
+                value = new_row.get(col)
+                # Check for duplicates in existing rows
+                for row in table["rows"]:
+                    if row.get(col) == value:
+                        if index_type == "PRIMARY":
+                            return f"Error: Duplicate entry '{value}' for key 'PRIMARY'"
+                        else:
+                            return f"Error: Duplicate entry '{value}' for key '{col}'"
+        
+        # All checks passed, add the row
+        table["rows"].append(new_row)
         return f"Inserted {display_values} into {table_name}."
 
     def select(self, table_name, columns="*"):
@@ -297,11 +376,11 @@ class SQLVM:
             if command.upper() == "SHOW TABLES":
                 return self.show_tables()
         elif cmd == "INSERT":
-            match = re.match(r"INSERT INTO (\w+) VALUES \((.+)\)", command)
-            if match:
-                table_name = match.group(1)
-                values_str = match.group(2)
-                # Improved value splitting: handles quoted strings, numbers, booleans
+            # Match INSERT INTO table VALUES (...) format
+            match_simple = re.match(r"INSERT INTO (\w+) VALUES \((.+)\)", command)
+            if match_simple:
+                table_name = match_simple.group(1)
+                values_str = match_simple.group(2)
                 pattern = r'''
                     "([^"]*)"           # double-quoted string
                     |                   # or
@@ -314,6 +393,32 @@ class SQLVM:
                     elif m.group(2) is not None:
                         values.append(m.group(2).strip())
                 return self.insert(table_name, values)
+            
+            # Match INSERT INTO table (col1, col2) VALUES (...) format
+            match_columns = re.match(r"INSERT INTO (\w+) \((.+?)\) VALUES \((.+)\)", command, re.IGNORECASE)
+            if match_columns:
+                table_name = match_columns.group(1)
+                columns_str = match_columns.group(2)
+                values_str = match_columns.group(3)
+                
+                # Extract column names
+                columns = [col.strip(' `\'\"') for col in columns_str.split(',')]
+                
+                # Extract values
+                pattern = r'''
+                    "([^"]*)"           # double-quoted string
+                    |                   # or
+                    ([^,\s][^,]*)       # unquoted value (numbers, booleans, etc.)
+                '''
+                values = []
+                for m in re.finditer(pattern, values_str, re.VERBOSE):
+                    if m.group(1) is not None:
+                        values.append(m.group(1))
+                    elif m.group(2) is not None:
+                        values.append(m.group(2).strip())
+                
+                return self.insert(table_name, values, columns)
+            
         elif cmd == "SELECT":
             match = re.match(r"SELECT (.+) FROM (\w+)", command)
             if match:
