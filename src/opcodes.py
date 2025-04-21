@@ -1,0 +1,16 @@
+OPCODES = {
+    "CREATE_DATABASE": 1,
+    "DROP_DATABASE": 2,
+    "USE_DATABASE": 3,
+    "SHOW_DATABASES": 4,
+    "CREATE_TABLE": 5,
+    "DROP_TABLE": 6,
+    "INSERT_ROW": 7,
+    "SELECT_ROWS": 8,
+    "UPDATE_ROWS": 9,
+    "DELETE_ROWS": 10,
+    "ALTER_TABLE": 11,
+    "EXPORT_TO_JSON": 12,
+    "EXPORT_TO_SQL": 13,
+    "INVALID_COMMAND": 99,
+}

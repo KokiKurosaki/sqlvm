@@ -1,11 +1,14 @@
 import re
 import time  # Import the time module
+from .parser import SQLParser
+from .vm import SQLVMInterpreter
 
 class SQLVM:
     def __init__(self):
         self.databases = {}  # { db_name: {table_name: ...} }
         self.current_db = None
         self.tables = {}  # For backward compatibility, but now always points to current db's tables
+        self.vm = SQLVMInterpreter(self)
 
     def create_database(self, db_name):
         if db_name in self.databases:
@@ -14,25 +17,25 @@ class SQLVM:
         return f"Database {db_name} created."
 
     def drop_database(self, db_name, if_exists=False):
-        if db_name not in self.databases:
-            if if_exists:
+        if (db_name not in self.databases):
+            if (if_exists):
                 return f"Database {db_name} does not exist. Skipped."
             return f"Error: Database {db_name} does not exist."
         del self.databases[db_name]
-        if self.current_db == db_name:
+        if (self.current_db == db_name):
             self.current_db = None
             self.tables = {}
         return f"Database {db_name} dropped."
 
     def use_database(self, db_name):
-        if db_name not in self.databases:
+        if (db_name not in self.databases):
             return f"Error: Database {db_name} does not exist."
         self.current_db = db_name
         self.tables = self.databases[db_name]
         return f"Using database {db_name}."
 
     def show_databases(self):
-        if not self.databases:
+        if (not self.databases):
             return "No databases found."
         dbs = sorted(self.databases.keys())
         # Format as a simple table
@@ -43,9 +46,9 @@ class SQLVM:
         return sep + "\n" + header + "\n" + sep + "\n" + "\n".join(rows) + "\n" + sep
 
     def show_tables(self):
-        if self.current_db is None:
+        if (self.current_db is None):
             return "Error: No database selected. Use USE database_name;"
-        if not self.tables:
+        if (not self.tables):
             return "No tables found in current database."
         tbls = sorted(self.tables.keys())
         maxlen = max(len("Table"), *(len(t) for t in tbls))
@@ -70,7 +73,7 @@ class SQLVM:
             # Parse column definition with regex to handle VARCHAR(n) and other types with parameters
             col_match = re.match(r'(\w+)\s+(\w+)(?:\((\d+)\))?(.*)$', coldef.strip(), re.I)
             
-            if not col_match:
+            if (not col_match):
                 # Handle the simplest case where only column name is provided
                 col = coldef.strip()
                 typ = "TEXT"
@@ -84,7 +87,7 @@ class SQLVM:
                 modifiers = col_match.group(4).upper() if col_match.group(4) else ""
                 
                 # Build the full type with parameters
-                if type_param:
+                if (type_param):
                     typ = f"{base_type}({type_param})"
                 else:
                     typ = base_type
@@ -99,22 +102,22 @@ class SQLVM:
                 index_type = None
                 
                 # Also check for the legacy "PRIMARY" keyword and convert to "PRIMARY KEY"
-                if "PRIMARY" in modifiers and "PRIMARY KEY" not in modifiers:
+                if ("PRIMARY" in modifiers and "PRIMARY KEY" not in modifiers):
                     index_type = "PRIMARY KEY"
                 else:
                     for idx_name, idx_value in index_options.items():
-                        if idx_name in modifiers:
+                        if (idx_name in modifiers):
                             index_type = idx_value
                             break
             
             columns.append(col)
             types[col] = typ
-            if auto_increment:
+            if (auto_increment):
                 auto_increment_cols.append(col)
                 # Make AUTO_INCREMENT columns PRIMARY KEY by default if no other index type specified
-                if not index_type and typ.upper().startswith("INT"):
+                if (not index_type and typ.upper().startswith("INT")):
                     index_type = "PRIMARY KEY"
-            if index_type:
+            if (index_type):
                 indexes[col] = index_type
         
         return columns, types, auto_increment_cols, indexes
@@ -126,22 +129,22 @@ class SQLVM:
         # Extract base type without size parameter
         base_type = re.match(r'(\w+)(?:\(\d+\))?', typ).group(1).upper()
         
-        if base_type in ("TEXT", "CHAR", "VARCHAR"):
+        if (base_type in ("TEXT", "CHAR", "VARCHAR")):
             return str(value)
-        elif base_type == "INT":
+        elif (base_type == "INT"):
             try:
                 return int(value)
             except Exception:
                 raise ValueError(f"Invalid INT value: {value}")
-        elif base_type == "FLOAT":
+        elif (base_type == "FLOAT"):
             try:
                 return float(value)
             except Exception:
                 raise ValueError(f"Invalid FLOAT value: {value}")
-        elif base_type == "BOOL":
-            if str(value).lower() in ("1", "true", "yes", "on"):
+        elif (base_type == "BOOL"):
+            if (str(value).lower() in ("1", "true", "yes", "on")):
                 return True
-            elif str(value).lower() in ("0", "false", "no", "off"):
+            elif (str(value).lower() in ("0", "false", "no", "off")):
                 return False
             else:
                 raise ValueError(f"Invalid BOOL value: {value}")
@@ -149,24 +152,24 @@ class SQLVM:
             return str(value)
 
     def create_table(self, table_name, columns_def):
-        if self.current_db is None:
+        if (self.current_db is None):
             return "Error: No database selected. Use USE database_name;"
-        if table_name in self.tables:
+        if (table_name in self.tables):
             return f"Error: Table {table_name} already exists."
         
         columns, types, auto_increment_cols, indexes = self._parse_column_definitions(", ".join(columns_def) if isinstance(columns_def, list) else columns_def)
         
         # Check that there's only one AUTO_INCREMENT column
-        if len(auto_increment_cols) > 1:
+        if (len(auto_increment_cols) > 1):
             return "Error: Incorrect table definition; there can be only one auto column and it must be defined as a key"
         
         # Check that AUTO_INCREMENT column is defined as a key (PRIMARY KEY, UNIQUE or INDEX)
-        if auto_increment_cols and auto_increment_cols[0] not in indexes:
+        if (auto_increment_cols and auto_increment_cols[0] not in indexes):
             return "Error: Incorrect table definition; there can be only one auto column and it must be defined as a key"
             
         # Validate indexes - check for multiple PRIMARY KEY definitions
         primary_keys = [col for col, idx_type in indexes.items() if idx_type == "PRIMARY KEY"]
-        if len(primary_keys) > 1:
+        if (len(primary_keys) > 1):
             return f"Error: Multiple PRIMARY KEY definitions. A table can have only one primary key."
         
         self.tables[table_name] = {
@@ -181,18 +184,18 @@ class SQLVM:
         col_defs = []
         for col in columns:
             col_def = f"{col} {types[col]}"
-            if col in auto_increment_cols:
+            if (col in auto_increment_cols):
                 col_def += " AUTO_INCREMENT"
-            if col in indexes:
+            if (col in indexes):
                 col_def += f" {indexes[col]}"
             col_defs.append(col_def)
             
         return f"Table {table_name} created with columns: {', '.join(col_defs)}."
 
     def insert(self, table_name, values, specified_columns=None):
-        if self.current_db is None:
+        if (self.current_db is None):
             return "Error: No database selected. Use USE database_name;"
-        if table_name not in self.tables:
+        if (table_name not in self.tables):
             return f"Error: Table {table_name} does not exist."
         table = self.tables[table_name]
         columns = table["columns"]
@@ -201,7 +204,7 @@ class SQLVM:
         indexes = table.get("indexes", {})
         
         # Handle case when columns are explicitly specified
-        if specified_columns:
+        if (specified_columns):
             # Create a mapping to match specified columns to their positions
             column_mapping = {}
             for i, col in enumerate(columns):
@@ -212,28 +215,28 @@ class SQLVM:
             
             # Fill in the values for the specified columns
             for i, col in enumerate(specified_columns):
-                if i < len(values):
+                if (i < len(values)):
                     # Check if column exists
-                    if col not in column_mapping:
+                    if (col not in column_mapping):
                         return f"Error: Unknown column '{col}' in field list"
                     full_values[column_mapping[col]] = values[i]
             
             values = full_values
         
         # Handle case when auto-increment columns are omitted
-        if len(values) != len(columns) and len(values) == len([c for c in columns if c not in auto_increment]):
+        if (len(values) != len(columns) and len(values) == len([c for c in columns if c not in auto_increment])):
             # The values match the number of non-auto-increment columns
             values_with_auto = []
             value_index = 0
             for col in columns:
-                if col in auto_increment:
+                if (col in auto_increment):
                     values_with_auto.append(None)  # Placeholder for auto-increment
                 else:
                     values_with_auto.append(values[value_index])
                     value_index += 1
             values = values_with_auto
         
-        if len(values) != len(columns):
+        if (len(values) != len(columns)):
             return f"Error: Number of values doesn't match columns."
         
         # Create a dictionary to store the new row values
@@ -242,7 +245,7 @@ class SQLVM:
         
         # First pass: convert values and handle auto-increment
         for col, val in zip(columns, values):
-            if col in auto_increment and (val is None or val == "NULL"):
+            if (col in auto_increment and (val is None or val == "NULL")):
                 # Handle auto-increment value
                 table["auto_increment"][col] += 1
                 auto_value = table["auto_increment"][col]
@@ -258,12 +261,12 @@ class SQLVM:
         
         # Second pass: check index constraints
         for col, index_type in indexes.items():
-            if index_type in ["PRIMARY KEY", "UNIQUE"]:
+            if (index_type in ["PRIMARY KEY", "UNIQUE"]):
                 value = new_row.get(col)
                 # Check for duplicates in existing rows
                 for row in table["rows"]:
-                    if row.get(col) == value:
-                        if index_type == "PRIMARY KEY":
+                    if (row.get(col) == value):
+                        if (index_type == "PRIMARY KEY"):
                             return f"Error: Duplicate entry '{value}' for key 'PRIMARY KEY'"
                         else:
                             return f"Error: Duplicate entry '{value}' for key '{col}'"
@@ -273,12 +276,12 @@ class SQLVM:
         return f"Inserted {display_values} into {table_name}."
 
     def select(self, table_name, columns="*"):
-        if self.current_db is None:
+        if (self.current_db is None):
             return "Error: No database selected. Use USE database_name;"
-        if table_name not in self.tables:
+        if (table_name not in self.tables):
             return f"Error: Table {table_name} does not exist."
         table = self.tables[table_name]
-        if columns == "*":
+        if (columns == "*"):
             columns = table["columns"]
         else:
             columns = [col.strip() for col in columns.split(",")]
@@ -288,7 +291,7 @@ class SQLVM:
         for row in table["rows"]:
             for col in columns:
                 value_width = len(str(row.get(col, 'NULL')))
-                if col in widths:
+                if (col in widths):
                     widths[col] = max(widths[col], value_width)
         
         # Format with clear column boundaries using vertical bars
@@ -305,7 +308,7 @@ class SQLVM:
         
         # Combine everything with clear boundaries
         result = separator + "\n" + header + "\n" + separator + "\n"
-        if formatted_rows:
+        if (formatted_rows):
             result += "\n".join(formatted_rows) + "\n" + separator
         else:
             result += separator  # Bottom line for empty result set
@@ -313,9 +316,9 @@ class SQLVM:
         return result
 
     def update(self, table_name, set_values, where=None):
-        if self.current_db is None:
+        if (self.current_db is None):
             return "Error: No database selected. Use USE database_name;"
-        if table_name not in self.tables:
+        if (table_name not in self.tables):
             return f"Error: Table {table_name} does not exist."
         table = self.tables[table_name]
         types = table.get("types", {c: "TEXT" for c in table["columns"]})
@@ -330,21 +333,21 @@ class SQLVM:
 
         updated_count = 0
         for row in table["rows"]:
-            if where is None or self._evaluate_condition(row, where):
+            if (where is None or self._evaluate_condition(row, where)):
                 for column, value in set_dict.items():
-                    if column in row:
+                    if (column in row):
                         row[column] = value
                 updated_count += 1
         return f"Updated {updated_count} row/s in {table_name}."
 
     def delete(self, table_name, where=None):
-        if self.current_db is None:
+        if (self.current_db is None):
             return "Error: No database selected. Use USE database_name;"
-        if table_name not in self.tables:
+        if (table_name not in self.tables):
             return f"Error: Table {table_name} does not exist."
         table = self.tables[table_name]
         initial_row_count = len(table["rows"])
-        table["rows"] = [row for row in table["rows"] if where is None or not self._evaluate_condition(row, where)]
+        table["rows"] = [row for row in table["rows"] if (where is None or not self._evaluate_condition(row, where))]
         deleted_count = initial_row_count - len(table["rows"])
         return f"Deleted {deleted_count} row/s from {table_name}."
 
@@ -354,10 +357,10 @@ class SQLVM:
         value = value.strip().strip('"')
         typ = None
         for table in self.tables.values():
-            if "types" in table and col in table["types"]:
+            if ("types" in table and col in table["types"]):
                 typ = table["types"][col]
                 break
-        if typ:
+        if (typ):
             try:
                 value = self._convert_value(value, typ)
             except Exception:
@@ -394,147 +397,98 @@ class SQLVM:
         message, _ = SQLVMExporter.export_to_json(self, db_name, file_path)
         return message
 
+    def alter_table(self, table_name, operation, column_def=None):
+        if (self.current_db is None):
+            return "Error: No database selected. Use USE database_name;"
+        if (table_name not in self.tables):
+            return f"Error: Table {table_name} does not exist."
+        
+        table = self.tables[table_name]
+
+        if (operation.upper() == "ADD"):
+            # Parse the column definition
+            col_match = re.match(r'(\w+)\s+(\w+)(?:\((\d+)\))?(.*)$', column_def.strip(), re.I)
+            if (not col_match):
+                return f"Error: Invalid column definition '{column_def}'."
+            
+            col_name = col_match.group(1)
+            col_type = col_match.group(2).upper()
+            col_size = col_match.group(3)
+            modifiers = col_match.group(4).upper() if col_match.group(4) else ""
+
+            # Check if the column already exists
+            if (col_name in table["columns"]):
+                return f"Error: Column '{col_name}' already exists in table '{table_name}'."
+
+            # Add the column to the table
+            full_type = f"{col_type}({col_size})" if col_size else col_type
+            table["columns"].append(col_name)
+            table["types"][col_name] = full_type
+
+            # Handle AUTO_INCREMENT
+            if ("AUTO_INCREMENT" in modifiers):
+                if (any("AUTO_INCREMENT" in table["types"][col] for col in table["auto_increment"])):
+                    return "Error: Only one AUTO_INCREMENT column is allowed per table."
+                table["auto_increment"][col_name] = 0
+
+            # Add default values for the new column in existing rows
+            for row in table["rows"]:
+                row[col_name] = None
+
+            return f"Column '{col_name}' added to table '{table_name}'."
+
+        elif (operation.upper() == "DROP"):
+            # Check if the column exists
+            if (column_def not in table["columns"]):
+                return f"Error: Column '{column_def}' does not exist in table '{table_name}'."
+
+            # Remove the column from the table
+            table["columns"].remove(column_def)
+            table["types"].pop(column_def, None)
+            table["auto_increment"].pop(column_def, None)
+            table["indexes"].pop(column_def, None)
+
+            # Remove the column from all rows
+            for row in table["rows"]:
+                row.pop(column_def, None)
+
+            return f"Column '{column_def}' dropped from table '{table_name}'."
+
+        elif (operation.upper() == "MODIFY"):
+            # Parse the column definition
+            col_match = re.match(r'(\w+)\s+(\w+)(?:\((\d+)\))?(.*)$', column_def.strip(), re.I)
+            if (not col_match):
+                return f"Error: Invalid column definition '{column_def}'."
+            
+            col_name = col_match.group(1)
+            col_type = col_match.group(2).upper()
+            col_size = col_match.group(3)
+            modifiers = col_match.group(4).upper() if col_match.group(4) else ""
+
+            # Check if the column exists
+            if (col_name not in table["columns"]):
+                return f"Error: Column '{col_name}' does not exist in table '{table_name}'."
+
+            # Update the column type
+            full_type = f"{col_type}({col_size})" if col_size else col_type
+            table["types"][col_name] = full_type
+
+            return f"Column '{col_name}' modified in table '{table_name}'."
+
+        else:
+            return f"Error: Unsupported ALTER TABLE operation '{operation}'."
+
     def execute_command(self, command):
-        # Clean up the command - remove extra whitespace, newlines, and trailing semicolon
-        command = re.sub(r'\s+', ' ', command.strip().rstrip(";"))
-        
-        parts = command.split(" ", 1)
-        cmd = parts[0].upper()  # Normalize the command to uppercase
+        import time  # Ensure the time module is imported
+        start_time = time.time()  # Record the start time
 
-        start_time = time.time()  # Start timing
+        bytecode = SQLParser.parse_to_bytecode(command)
+        results = self.vm.execute_bytecode(bytecode)
+        result_output = "\n".join(results)
 
-        try:
-            # Database commands
-            if cmd == "CREATE":
-                # CREATE DATABASE
-                match_db = re.match(r"CREATE DATABASE (\w+)", command, re.I)
-                if match_db:
-                    db_name = match_db.group(1)
-                    result = self.create_database(db_name)
-                # CREATE TABLE
-                match = re.match(r"CREATE TABLE (\w+) \((.+)\)", command, re.I)
-                if match:
-                    table_name = match.group(1)
-                    columns_def = match.group(2)
-                    result = self.create_table(table_name, columns_def)
-            elif cmd == "DROP":
-                # DROP DATABASE [IF EXISTS] db_name
-                match = re.match(r"DROP DATABASE(?: IF EXISTS)? (\w+)", command, re.I)
-                if match:
-                    db_name = match.group(1)
-                    if_exists = "IF EXISTS" in command.upper()
-                    result = self.drop_database(db_name, if_exists)
-            elif cmd == "USE":
-                # USE db_name
-                match = re.match(r"USE (\w+)", command, re.I)
-                if match:
-                    db_name = match.group(1)
-                    result = self.use_database(db_name)
-            elif cmd == "SHOW":
-                # SHOW DATABASES
-                if command.upper() == "SHOW DATABASES":
-                    result = self.show_databases()
-                # SHOW TABLES
-                if command.upper() == "SHOW TABLES":
-                    result = self.show_tables()
-            elif cmd == "INSERT":
-                # Match INSERT INTO table VALUES (...) format
-                match_simple = re.match(r"INSERT INTO (\w+) VALUES \((.+)\)", command, re.I)
-                if match_simple:
-                    table_name = match_simple.group(1)
-                    values_str = match_simple.group(2)
-                    pattern = r'''
-                        "([^"]*)"           # double-quoted string
-                        |                   # or
-                        ([^,\s][^,]*)       # unquoted value (numbers, booleans, etc.)
-                    '''
-                    values = []
-                    for m in re.finditer(pattern, values_str, re.VERBOSE):
-                        if m.group(1) is not None:
-                            values.append(m.group(1))
-                        elif m.group(2) is not None:
-                            values.append(m.group(2).strip())
-                    result = self.insert(table_name, values)
-                
-                # Match INSERT INTO table (col1, col2) VALUES (...) format
-                match_columns = re.match(r"INSERT INTO (\w+) \((.+?)\) VALUES \((.+)\)", command, re.I)
-                if match_columns:
-                    table_name = match_columns.group(1)
-                    columns_str = match_columns.group(2)
-                    values_str = match_columns.group(3)
-                    
-                    # Extract column names
-                    columns = [col.strip(' `\'\"') for col in columns_str.split(',')]
-                    
-                    # Extract values
-                    pattern = r'''
-                        "([^"]*)"           # double-quoted string
-                        |                   # or
-                        ([^,\s][^,]*)       # unquoted value (numbers, booleans, etc.)
-                    '''
-                    values = []
-                    for m in re.finditer(pattern, values_str, re.VERBOSE):
-                        if m.group(1) is not None:
-                            values.append(m.group(1))
-                        elif m.group(2) is not None:
-                            values.append(m.group(2).strip())
-                    
-                    result = self.insert(table_name, values, columns)
-            elif cmd == "SELECT":
-                match = re.match(r"SELECT (.+) FROM (\w+)", command, re.I)
-                if match:
-                    columns = match.group(1)
-                    table_name = match.group(2)
-                    result = self.select(table_name, columns)
-            elif cmd == "UPDATE":
-                match = re.match(r"UPDATE (\w+) SET (.+) WHERE (.+)", command, re.I)
-                if match:
-                    table_name = match.group(1)
-                    set_values = match.group(2)
-                    where = match.group(3)
-                    result = self.update(table_name, set_values, where)
-            elif cmd == "DELETE":
-                match = re.match(r"DELETE FROM (\w+) WHERE (.+)", command, re.I)
-                if match:
-                    table_name = match.group(1)
-                    where = match.group(2)
-                    result = self.delete(table_name, where)
-            elif cmd == "EXPORT":
-                # EXPORT DATABASE db_name TO SQL file_path
-                match_export_sql = re.match(r"EXPORT DATABASE (\w+) TO SQL(?:\s+(.+))?", command, re.I)
-                if match_export_sql:
-                    db_name = match_export_sql.group(1)
-                    file_path = match_export_sql.group(2).strip() if match_export_sql.group(2) else None
-                    result = self.export_to_sql(db_name, file_path)
-                    
-                # EXPORT ALL TO SQL file_path
-                match_export_all_sql = re.match(r"EXPORT ALL TO SQL(?:\s+(.+))?", command, re.I)
-                if match_export_all_sql:
-                    file_path = match_export_all_sql.group(1).strip() if match_export_all_sql.group(1) else None
-                    result = self.export_to_sql(None, file_path)
-                    
-                # EXPORT DATABASE db_name TO JSON file_path
-                match_export_json = re.match(r"EXPORT DATABASE (\w+) TO JSON(?:\s+(.+))?", command, re.I)
-                if match_export_json:
-                    db_name = match_export_json.group(1)
-                    file_path = match_export_json.group(2).strip() if match_export_json.group(2) else None
-                    result = self.export_to_json(db_name, file_path)
-                    
-                # EXPORT ALL TO JSON file_path
-                match_export_all_json = re.match(r"EXPORT ALL TO JSON(?:\s+(.+))?", command, re.I)
-                if match_export_all_json:
-                    file_path = match_export_all_json.group(1).strip() if match_export_all_json.group(1) else None
-                    result = self.export_to_json(None, file_path)
-            else:
-                result = "Error: Invalid command."
-        except Exception as e:
-            return f"Error: {e}"
+        end_time = time.time()  # Record the end time
+        elapsed_time = end_time - start_time  # Calculate elapsed time
 
-        end_time = time.time()  # End timing
-        elapsed_time = end_time - start_time
-
-        # Append execution time to the result for successful queries
-        if "Error" not in result:
-            result += f" (Execution time: {elapsed_time:.4f} seconds)"
-        
-        return result
+        # Append execution time to the result
+        result_output += f"\n(Execution time: {elapsed_time:.4f} seconds)"
+        return result_output
