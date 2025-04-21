@@ -9,8 +9,8 @@ sqlvm/
 ├── src/             # Source code
 │   ├── __init__.py  # Package initialization
 │   ├── sqlvm.py     # Core SQLVM implementation
-│   ├── gui.py       # GUI interface (if available)
-│   └── main.py      # Main entry point (if available)
+│   ├── gui.py       # GUI interface
+│   └── main.py      # Main entry point for GUI application
 └── test/            # Test scripts
     ├── interactive.py  # Interactive SQL shell
     └── test_sqlvm.py   # Demonstration of SQLVM features
@@ -23,12 +23,27 @@ sqlvm/
 - Primary key and unique constraints
 - AUTO_INCREMENT column support
 - Basic SQL commands: CREATE, INSERT, SELECT, UPDATE, DELETE
+- Graphical user interface with command history
 
 ## How to Run
 
+### Graphical User Interface (GUI)
+
+To run the full SQLVM application with graphical interface:
+
+```bash
+python -m src.main
+```
+
+This will open a GUI window where you can:
+- Type SQL commands in the input field
+- View command results in the output box
+- Use the command history with up/down arrow keys
+- Zoom text in and out using Ctrl+ and Ctrl-
+
 ### Interactive SQL Shell
 
-To start an interactive SQL shell with a pre-configured database (`db1`) and table (`users`):
+To start a command-line interactive SQL shell with a pre-configured database (`db1`) and table (`users`):
 
 ```bash
 python test/interactive.py
