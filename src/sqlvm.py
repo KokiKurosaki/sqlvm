@@ -1,4 +1,5 @@
 import re
+import time  # Import the time module
 
 class SQLVM:
     def __init__(self):
@@ -398,129 +399,142 @@ class SQLVM:
         command = re.sub(r'\s+', ' ', command.strip().rstrip(";"))
         
         parts = command.split(" ", 1)
-        cmd = parts[0].upper()
+        cmd = parts[0].upper()  # Normalize the command to uppercase
 
-        # Database commands
-        if cmd == "CREATE":
-            # CREATE DATABASE
-            match_db = re.match(r"CREATE DATABASE (\w+)", command, re.I)
-            if match_db:
-                db_name = match_db.group(1)
-                return self.create_database(db_name)
-            # CREATE TABLE
-            match = re.match(r"CREATE TABLE (\w+) \((.+)\)", command, re.I)
-            if match:
-                table_name = match.group(1)
-                columns_def = match.group(2)
-                return self.create_table(table_name, columns_def)
-        elif cmd == "DROP":
-            # DROP DATABASE [IF EXISTS] db_name
-            match = re.match(r"DROP DATABASE(?: IF EXISTS)? (\w+)", command, re.I)
-            if match:
-                db_name = match.group(1)
-                if_exists = "IF EXISTS" in command.upper()
-                return self.drop_database(db_name, if_exists)
-        elif cmd == "USE":
-            # USE db_name
-            match = re.match(r"USE (\w+)", command, re.I)
-            if match:
-                db_name = match.group(1)
-                return self.use_database(db_name)
-        elif cmd == "SHOW":
-            # SHOW DATABASES
-            if command.upper() == "SHOW DATABASES":
-                return self.show_databases()
-            # SHOW TABLES
-            if command.upper() == "SHOW TABLES":
-                return self.show_tables()
-        elif cmd == "INSERT":
-            # Match INSERT INTO table VALUES (...) format
-            match_simple = re.match(r"INSERT INTO (\w+) VALUES \((.+)\)", command)
-            if match_simple:
-                table_name = match_simple.group(1)
-                values_str = match_simple.group(2)
-                pattern = r'''
-                    "([^"]*)"           # double-quoted string
-                    |                   # or
-                    ([^,\s][^,]*)       # unquoted value (numbers, booleans, etc.)
-                '''
-                values = []
-                for m in re.finditer(pattern, values_str, re.VERBOSE):
-                    if m.group(1) is not None:
-                        values.append(m.group(1))
-                    elif m.group(2) is not None:
-                        values.append(m.group(2).strip())
-                return self.insert(table_name, values)
-            
-            # Match INSERT INTO table (col1, col2) VALUES (...) format
-            match_columns = re.match(r"INSERT INTO (\w+) \((.+?)\) VALUES \((.+)\)", command, re.IGNORECASE)
-            if match_columns:
-                table_name = match_columns.group(1)
-                columns_str = match_columns.group(2)
-                values_str = match_columns.group(3)
+        start_time = time.time()  # Start timing
+
+        try:
+            # Database commands
+            if cmd == "CREATE":
+                # CREATE DATABASE
+                match_db = re.match(r"CREATE DATABASE (\w+)", command, re.I)
+                if match_db:
+                    db_name = match_db.group(1)
+                    result = self.create_database(db_name)
+                # CREATE TABLE
+                match = re.match(r"CREATE TABLE (\w+) \((.+)\)", command, re.I)
+                if match:
+                    table_name = match.group(1)
+                    columns_def = match.group(2)
+                    result = self.create_table(table_name, columns_def)
+            elif cmd == "DROP":
+                # DROP DATABASE [IF EXISTS] db_name
+                match = re.match(r"DROP DATABASE(?: IF EXISTS)? (\w+)", command, re.I)
+                if match:
+                    db_name = match.group(1)
+                    if_exists = "IF EXISTS" in command.upper()
+                    result = self.drop_database(db_name, if_exists)
+            elif cmd == "USE":
+                # USE db_name
+                match = re.match(r"USE (\w+)", command, re.I)
+                if match:
+                    db_name = match.group(1)
+                    result = self.use_database(db_name)
+            elif cmd == "SHOW":
+                # SHOW DATABASES
+                if command.upper() == "SHOW DATABASES":
+                    result = self.show_databases()
+                # SHOW TABLES
+                if command.upper() == "SHOW TABLES":
+                    result = self.show_tables()
+            elif cmd == "INSERT":
+                # Match INSERT INTO table VALUES (...) format
+                match_simple = re.match(r"INSERT INTO (\w+) VALUES \((.+)\)", command, re.I)
+                if match_simple:
+                    table_name = match_simple.group(1)
+                    values_str = match_simple.group(2)
+                    pattern = r'''
+                        "([^"]*)"           # double-quoted string
+                        |                   # or
+                        ([^,\s][^,]*)       # unquoted value (numbers, booleans, etc.)
+                    '''
+                    values = []
+                    for m in re.finditer(pattern, values_str, re.VERBOSE):
+                        if m.group(1) is not None:
+                            values.append(m.group(1))
+                        elif m.group(2) is not None:
+                            values.append(m.group(2).strip())
+                    result = self.insert(table_name, values)
                 
-                # Extract column names
-                columns = [col.strip(' `\'\"') for col in columns_str.split(',')]
-                
-                # Extract values
-                pattern = r'''
-                    "([^"]*)"           # double-quoted string
-                    |                   # or
-                    ([^,\s][^,]*)       # unquoted value (numbers, booleans, etc.)
-                '''
-                values = []
-                for m in re.finditer(pattern, values_str, re.VERBOSE):
-                    if m.group(1) is not None:
-                        values.append(m.group(1))
-                    elif m.group(2) is not None:
-                        values.append(m.group(2).strip())
-                
-                return self.insert(table_name, values, columns)
-            
-        elif cmd == "SELECT":
-            match = re.match(r"SELECT (.+) FROM (\w+)", command)
-            if match:
-                columns = match.group(1)
-                table_name = match.group(2)
-                return self.select(table_name, columns)
-        elif cmd == "UPDATE":
-            match = re.match(r"UPDATE (\w+) SET (.+) WHERE (.+)", command)
-            if match:
-                table_name = match.group(1)
-                set_values = match.group(2)
-                where = match.group(3)
-                return self.update(table_name, set_values, where)
-        elif cmd == "DELETE":
-            match = re.match(r"DELETE FROM (\w+) WHERE (.+)", command)
-            if match:
-                table_name = match.group(1)
-                where = match.group(2)
-                return self.delete(table_name, where)
-        elif cmd == "EXPORT":
-            # EXPORT DATABASE db_name TO SQL file_path
-            match_export_sql = re.match(r"EXPORT DATABASE (\w+) TO SQL(?:\s+(.+))?", command, re.I)
-            if match_export_sql:
-                db_name = match_export_sql.group(1)
-                file_path = match_export_sql.group(2).strip() if match_export_sql.group(2) else None
-                return self.export_to_sql(db_name, file_path)
-                
-            # EXPORT ALL TO SQL file_path
-            match_export_all_sql = re.match(r"EXPORT ALL TO SQL(?:\s+(.+))?", command, re.I)
-            if match_export_all_sql:
-                file_path = match_export_all_sql.group(1).strip() if match_export_all_sql.group(1) else None
-                return self.export_to_sql(None, file_path)
-                
-            # EXPORT DATABASE db_name TO JSON file_path
-            match_export_json = re.match(r"EXPORT DATABASE (\w+) TO JSON(?:\s+(.+))?", command, re.I)
-            if match_export_json:
-                db_name = match_export_json.group(1)
-                file_path = match_export_json.group(2).strip() if match_export_json.group(2) else None
-                return self.export_to_json(db_name, file_path)
-                
-            # EXPORT ALL TO JSON file_path
-            match_export_all_json = re.match(r"EXPORT ALL TO JSON(?:\s+(.+))?", command, re.I)
-            if match_export_all_json:
-                file_path = match_export_all_json.group(1).strip() if match_export_all_json.group(1) else None
-                return self.export_to_json(None, file_path)
-                
-        return "Error: Invalid command."
+                # Match INSERT INTO table (col1, col2) VALUES (...) format
+                match_columns = re.match(r"INSERT INTO (\w+) \((.+?)\) VALUES \((.+)\)", command, re.I)
+                if match_columns:
+                    table_name = match_columns.group(1)
+                    columns_str = match_columns.group(2)
+                    values_str = match_columns.group(3)
+                    
+                    # Extract column names
+                    columns = [col.strip(' `\'\"') for col in columns_str.split(',')]
+                    
+                    # Extract values
+                    pattern = r'''
+                        "([^"]*)"           # double-quoted string
+                        |                   # or
+                        ([^,\s][^,]*)       # unquoted value (numbers, booleans, etc.)
+                    '''
+                    values = []
+                    for m in re.finditer(pattern, values_str, re.VERBOSE):
+                        if m.group(1) is not None:
+                            values.append(m.group(1))
+                        elif m.group(2) is not None:
+                            values.append(m.group(2).strip())
+                    
+                    result = self.insert(table_name, values, columns)
+            elif cmd == "SELECT":
+                match = re.match(r"SELECT (.+) FROM (\w+)", command, re.I)
+                if match:
+                    columns = match.group(1)
+                    table_name = match.group(2)
+                    result = self.select(table_name, columns)
+            elif cmd == "UPDATE":
+                match = re.match(r"UPDATE (\w+) SET (.+) WHERE (.+)", command, re.I)
+                if match:
+                    table_name = match.group(1)
+                    set_values = match.group(2)
+                    where = match.group(3)
+                    result = self.update(table_name, set_values, where)
+            elif cmd == "DELETE":
+                match = re.match(r"DELETE FROM (\w+) WHERE (.+)", command, re.I)
+                if match:
+                    table_name = match.group(1)
+                    where = match.group(2)
+                    result = self.delete(table_name, where)
+            elif cmd == "EXPORT":
+                # EXPORT DATABASE db_name TO SQL file_path
+                match_export_sql = re.match(r"EXPORT DATABASE (\w+) TO SQL(?:\s+(.+))?", command, re.I)
+                if match_export_sql:
+                    db_name = match_export_sql.group(1)
+                    file_path = match_export_sql.group(2).strip() if match_export_sql.group(2) else None
+                    result = self.export_to_sql(db_name, file_path)
+                    
+                # EXPORT ALL TO SQL file_path
+                match_export_all_sql = re.match(r"EXPORT ALL TO SQL(?:\s+(.+))?", command, re.I)
+                if match_export_all_sql:
+                    file_path = match_export_all_sql.group(1).strip() if match_export_all_sql.group(1) else None
+                    result = self.export_to_sql(None, file_path)
+                    
+                # EXPORT DATABASE db_name TO JSON file_path
+                match_export_json = re.match(r"EXPORT DATABASE (\w+) TO JSON(?:\s+(.+))?", command, re.I)
+                if match_export_json:
+                    db_name = match_export_json.group(1)
+                    file_path = match_export_json.group(2).strip() if match_export_json.group(2) else None
+                    result = self.export_to_json(db_name, file_path)
+                    
+                # EXPORT ALL TO JSON file_path
+                match_export_all_json = re.match(r"EXPORT ALL TO JSON(?:\s+(.+))?", command, re.I)
+                if match_export_all_json:
+                    file_path = match_export_all_json.group(1).strip() if match_export_all_json.group(1) else None
+                    result = self.export_to_json(None, file_path)
+            else:
+                result = "Error: Invalid command."
+        except Exception as e:
+            return f"Error: {e}"
+
+        end_time = time.time()  # End timing
+        elapsed_time = end_time - start_time
+
+        # Append execution time to the result for successful queries
+        if "Error" not in result:
+            result += f" (Execution time: {elapsed_time:.4f} seconds)"
+        
+        return result
