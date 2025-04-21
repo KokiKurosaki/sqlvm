@@ -271,7 +271,7 @@ class SQLVM:
         table["rows"].append(new_row)
         return f"Inserted {display_values} into {table_name}."
 
-    def select(self, table_name, columns="*"):
+    def select(self, table_name, columns="*", where=None):
         if self.current_db is None:
             return "Error: No database selected. Use USE database_name;"
         if table_name not in self.tables:
@@ -282,9 +282,18 @@ class SQLVM:
         else:
             columns = [col.strip() for col in columns.split(",")]
         
+        # Filter rows based on WHERE condition if provided
+        filtered_rows = []
+        if where:
+            for row in table["rows"]:
+                if self._evaluate_condition(row, where):
+                    filtered_rows.append(row)
+        else:
+            filtered_rows = table["rows"]
+        
         # Calculate the maximum width for each column
         widths = {col: len(col) for col in columns}
-        for row in table["rows"]:
+        for row in filtered_rows:
             for col in columns:
                 value_width = len(str(row.get(col, 'NULL')))
                 if col in widths:
@@ -298,7 +307,7 @@ class SQLVM:
         
         # Format the rows with vertical bars for alignment
         formatted_rows = []
-        for row in table["rows"]:
+        for row in filtered_rows:
             formatted_row = "| " + " | ".join(str(row.get(col, 'NULL')).ljust(widths[col]) for col in columns) + " |"
             formatted_rows.append(formatted_row)
         
@@ -310,6 +319,103 @@ class SQLVM:
             result += separator  # Bottom line for empty result set
             
         return result
+
+    def _evaluate_condition(self, row, condition):
+        # Handle various comparison operators: =, !=, <, >, <=, >=, LIKE, IN
+        # Start with standard operators
+        for operator in ["!=", "<=", ">=", "=", "<", ">"]:
+            if operator in condition:
+                parts = condition.split(operator, 1)
+                col = parts[0].strip()
+                value_str = parts[1].strip()
+                
+                # Remove quotes from string literals
+                if value_str.startswith("'") and value_str.endswith("'"):
+                    value_str = value_str[1:-1]
+                elif value_str.startswith('"') and value_str.endswith('"'):
+                    value_str = value_str[1:-1]
+                
+                # Get column type and convert value accordingly
+                value = value_str
+                typ = None
+                for table in self.tables.values():
+                    if "types" in table and col in table["types"]:
+                        typ = table["types"][col]
+                        break
+                
+                if typ:
+                    try:
+                        value = self._convert_value(value_str, typ)
+                    except Exception:
+                        pass
+                
+                # Get row value
+                row_value = row.get(col)
+                
+                # Compare based on operator
+                if operator == "=":
+                    return row_value == value
+                elif operator == "!=":
+                    return row_value != value
+                elif operator == "<":
+                    return row_value < value
+                elif operator == ">":
+                    return row_value > value
+                elif operator == "<=":
+                    return row_value <= value
+                elif operator == ">=":
+                    return row_value >= value
+        
+        # Handle LIKE operator
+        if " LIKE " in condition.upper():
+            parts = condition.split(" LIKE ", 1)
+            col = parts[0].strip()
+            pattern = parts[1].strip()
+            
+            # Remove quotes from pattern
+            if pattern.startswith("'") and pattern.endswith("'"):
+                pattern = pattern[1:-1]
+            elif pattern.startswith('"') and pattern.endswith('"'):
+                pattern = pattern[1:-1]
+            
+            # Convert SQL LIKE pattern to regex pattern
+            pattern = pattern.replace("%", ".*").replace("_", ".")
+            pattern = f"^{pattern}$"
+            
+            row_value = str(row.get(col, ""))
+            return bool(re.match(pattern, row_value, re.IGNORECASE))
+        
+        # Handle IN operator
+        if " IN " in condition.upper():
+            parts = condition.split(" IN ", 1)
+            col = parts[0].strip()
+            values_str = parts[1].strip()
+            
+            # Parse values in parentheses
+            if values_str.startswith("(") and values_str.endswith(")"):
+                values_str = values_str[1:-1]
+                
+                # Split by comma and handle quoted values
+                values = []
+                for val in re.findall(r'(?:[^,"]|"(?:\\.|[^"])*")+', values_str):
+                    val = val.strip()
+                    if val.startswith("'") and val.endswith("'"):
+                        val = val[1:-1]
+                    elif val.startswith('"') and val.endswith('"'):
+                        val = val[1:-1]
+                    values.append(val)
+                
+                row_value = row.get(col)
+                return row_value in values
+        
+        # Fallback to simple equality check for backward compatibility
+        if "=" in condition:
+            col, value = condition.split("=", 1)
+            col = col.strip()
+            value = value.strip().strip('"').strip("'")
+            return row.get(col) == value
+        
+        return False
 
     def update(self, table_name, set_values, where=None):
         if self.current_db is None:
@@ -346,22 +452,6 @@ class SQLVM:
         table["rows"] = [row for row in table["rows"] if where is None or not self._evaluate_condition(row, where)]
         deleted_count = initial_row_count - len(table["rows"])
         return f"Deleted {deleted_count} row/s from {table_name}."
-
-    def _evaluate_condition(self, row, condition):
-        col, value = condition.split("=")
-        col = col.strip()
-        value = value.strip().strip('"')
-        typ = None
-        for table in self.tables.values():
-            if "types" in table and col in table["types"]:
-                typ = table["types"][col]
-                break
-        if typ:
-            try:
-                value = self._convert_value(value, typ)
-            except Exception:
-                pass
-        return row.get(col) == value
 
     def export_to_sql(self, db_name=None, file_path=None):
         """
@@ -478,11 +568,13 @@ class SQLVM:
                 return self.insert(table_name, values, columns)
             
         elif cmd == "SELECT":
-            match = re.match(r"SELECT (.+) FROM (\w+)", command)
+            # Updated to handle WHERE clause
+            match = re.match(r"SELECT (.+) FROM (\w+)(?:\s+WHERE\s+(.+))?", command, re.I)
             if match:
                 columns = match.group(1)
                 table_name = match.group(2)
-                return self.select(table_name, columns)
+                where = match.group(3)
+                return self.select(table_name, columns, where)
         elif cmd == "UPDATE":
             match = re.match(r"UPDATE (\w+) SET (.+) WHERE (.+)", command)
             if match:

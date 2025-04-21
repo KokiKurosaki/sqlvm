@@ -1,4 +1,4 @@
-# This file allows importing modules from the src package
-from .sqlvm import SQLVM
-from .gui import SQLGUI
-from .export import SQLVMExporter
+# Initialize the src package
+
+# Don't try to import SQLGUI here
+# We'll import the specific modules as needed
