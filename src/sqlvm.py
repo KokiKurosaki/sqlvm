@@ -338,33 +338,35 @@ class SQLVM:
         return row.get(col) == value
 
     def execute_command(self, command):
-        command = command.strip().rstrip(";")  # Remove trailing semicolon if present
+        # Clean up the command - remove extra whitespace, newlines, and trailing semicolon
+        command = re.sub(r'\s+', ' ', command.strip().rstrip(";"))
+        
         parts = command.split(" ", 1)
         cmd = parts[0].upper()
 
         # Database commands
         if cmd == "CREATE":
             # CREATE DATABASE
-            match_db = re.match(r"CREATE DATABASE (\w+)", command, re.IGNORECASE)
+            match_db = re.match(r"CREATE DATABASE (\w+)", command, re.I)
             if match_db:
                 db_name = match_db.group(1)
                 return self.create_database(db_name)
             # CREATE TABLE
-            match = re.match(r"CREATE TABLE (\w+) \((.+)\)", command, re.IGNORECASE)
+            match = re.match(r"CREATE TABLE (\w+) \((.+)\)", command, re.I)
             if match:
                 table_name = match.group(1)
                 columns_def = match.group(2)
                 return self.create_table(table_name, columns_def)
         elif cmd == "DROP":
             # DROP DATABASE [IF EXISTS] db_name
-            match = re.match(r"DROP DATABASE(?: IF EXISTS)? (\w+)", command, re.IGNORECASE)
+            match = re.match(r"DROP DATABASE(?: IF EXISTS)? (\w+)", command, re.I)
             if match:
                 db_name = match.group(1)
                 if_exists = "IF EXISTS" in command.upper()
                 return self.drop_database(db_name, if_exists)
         elif cmd == "USE":
             # USE db_name
-            match = re.match(r"USE (\w+)", command, re.IGNORECASE)
+            match = re.match(r"USE (\w+)", command, re.I)
             if match:
                 db_name = match.group(1)
                 return self.use_database(db_name)
