@@ -1,6 +1,13 @@
-# SQLVM
+# SQL Virtual Machine
 
-SQLVM is a lightweight SQL database virtual machine implemented in Python. It provides a simple in-memory SQL database system that supports many common SQL operations.
+A Python-based SQL simulator for educational purposes.
+
+## Features
+
+- In-memory SQL database system
+- Support for creating and managing multiple databases
+- GUI with command history and syntax highlighting
+- Export databases to SQL and JSON formats
 
 ## Project Structure
 
@@ -16,14 +23,94 @@ sqlvm/
     └── test_sqlvm.py   # Demonstration of SQLVM features
 ```
 
-## Features
+## SQL Examples
 
-- Multiple database support
-- Tables with various data types (INT, TEXT, VARCHAR, FLOAT, BOOL)
-- Primary key and unique constraints
-- AUTO_INCREMENT column support
-- Basic SQL commands: CREATE, INSERT, SELECT, UPDATE, DELETE
-- Graphical user interface with command history
+Here are some examples of SQL commands you can use:
+
+### Database Operations
+
+```sql
+-- Create a new database
+CREATE DATABASE school;
+
+-- Use a database
+USE school;
+
+-- Show all databases
+SHOW DATABASES;
+
+-- Show all tables in current database
+SHOW TABLES;
+
+-- Drop a database
+DROP DATABASE school;
+```
+
+### Table Operations
+
+```sql
+-- Create a table with proper SQL syntax
+CREATE TABLE students (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  email VARCHAR(255),
+  age INT,
+  gpa FLOAT
+);
+
+-- Create a table with unique constraints
+CREATE TABLE courses (
+  course_id INT PRIMARY KEY,
+  course_name VARCHAR(100) UNIQUE,
+  credits INT
+);
+```
+
+### Data Operations
+
+```sql
+-- Insert data
+INSERT INTO students VALUES (1, "John Smith", "john@example.com", 20, 3.5);
+
+-- Insert with specific columns
+INSERT INTO students (name, age) VALUES ("Jane Doe", 22);
+
+-- Select all columns
+SELECT * FROM students;
+
+-- Select specific columns
+SELECT name, age FROM students;
+
+-- Update data
+UPDATE students SET age=21 WHERE name="John Smith";
+
+-- Delete data
+DELETE FROM students WHERE id=1;
+```
+
+### Data Export
+
+```sql
+-- Export current database to SQL file
+EXPORT DATABASE school TO SQL;
+
+-- Export all databases to JSON
+EXPORT ALL TO JSON;
+```
+
+## Important Notes
+
+1. Always specify lengths for VARCHAR columns: `VARCHAR(255)`
+2. Use PRIMARY KEY instead of just PRIMARY
+3. End your commands with a semicolon (optional but recommended)
+
+## Installation
+
+```
+git clone https://github.com/yourusername/sqlvm.git
+cd sqlvm
+python -m sqlvm
+```
 
 ## How to Run
 

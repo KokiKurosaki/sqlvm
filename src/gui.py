@@ -1,6 +1,7 @@
 import tkinter as tk
-from tkinter import scrolledtext, messagebox
+from tkinter import scrolledtext, messagebox, filedialog
 import tkinter.font as tkFont
+import os
 
 class SQLGUI:
     def __init__(self, root, vm):
@@ -19,6 +20,18 @@ class SQLGUI:
         # Create Menu Bar
         self.menu_bar = tk.Menu(self.root)
         self.root.config(menu=self.menu_bar)
+
+        # File Menu
+        file_menu = tk.Menu(self.menu_bar, tearoff=0)
+        export_menu = tk.Menu(file_menu, tearoff=0)
+        export_menu.add_command(label="Export Current DB to SQL", command=self.export_current_db_to_sql)
+        export_menu.add_command(label="Export Current DB to JSON", command=self.export_current_db_to_json)
+        export_menu.add_command(label="Export All DBs to SQL", command=self.export_all_dbs_to_sql)
+        export_menu.add_command(label="Export All DBs to JSON", command=self.export_all_dbs_to_json)
+        file_menu.add_cascade(label="Export", menu=export_menu)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.root.quit)
+        self.menu_bar.add_cascade(label="File", menu=file_menu)
 
         # Help Menu
         help_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -100,20 +113,102 @@ class SQLGUI:
             self.history_index = len(self.command_history)
             self.command_entry.delete(0, tk.END)
 
+    def export_current_db_to_sql(self):
+        if self.vm.current_db is None:
+            messagebox.showerror("Error", "No database selected. Use USE database_name; first.")
+            return
+        
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".sql",
+            filetypes=[("SQL files", "*.sql"), ("All files", "*.*")],
+            initialfile=f"{self.vm.current_db}.sql"
+        )
+        if not file_path:
+            return
+        
+        result = self.vm.export_to_sql(self.vm.current_db, file_path)
+        self.output_box.config(state="normal")
+        self.output_box.insert(tk.END, f"> Export current DB to SQL\n{result}\n\n")
+        self.output_box.config(state="disabled")
+        self.output_box.yview(tk.END)
+    
+    def export_current_db_to_json(self):
+        if self.vm.current_db is None:
+            messagebox.showerror("Error", "No database selected. Use USE database_name; first.")
+            return
+        
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile=f"{self.vm.current_db}.json"
+        )
+        if not file_path:
+            return
+        
+        result = self.vm.export_to_json(self.vm.current_db, file_path)
+        self.output_box.config(state="normal")
+        self.output_box.insert(tk.END, f"> Export current DB to JSON\n{result}\n\n")
+        self.output_box.config(state="disabled")
+        self.output_box.yview(tk.END)
+    
+    def export_all_dbs_to_sql(self):
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".sql",
+            filetypes=[("SQL files", "*.sql"), ("All files", "*.*")],
+            initialfile="all_databases.sql"
+        )
+        if not file_path:
+            return
+        
+        result = self.vm.export_to_sql(None, file_path)
+        self.output_box.config(state="normal")
+        self.output_box.insert(tk.END, f"> Export all DBs to SQL\n{result}\n\n")
+        self.output_box.config(state="disabled")
+        self.output_box.yview(tk.END)
+    
+    def export_all_dbs_to_json(self):
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile="all_databases.json"
+        )
+        if not file_path:
+            return
+        
+        result = self.vm.export_to_json(None, file_path)
+        self.output_box.config(state="normal")
+        self.output_box.insert(tk.END, f"> Export all DBs to JSON\n{result}\n\n")
+        self.output_box.config(state="disabled")
+        self.output_box.yview(tk.END)
+
     def show_help(self):
         help_text = (
-            "SQLVM Help:\n"
-            "- CREATE DATABASE database_name\n"
-            "- DROP DATABASE [IF EXISTS] database_name\n"
-            "- USE database_name\n"
-            "- SHOW DATABASES\n"
-            "- SHOW TABLES\n"
-            "- CREATE TABLE table_name (col1 TYPE, col2 TYPE, ...)\n"
-            "- INSERT INTO table_name VALUES (val1, val2, ...)\n"
-            "- SELECT * FROM table_name\n"
-            "- UPDATE table_name SET col=value WHERE condition\n"
-            "- DELETE FROM table_name WHERE condition\n"
-            "- Type 'EXIT' to quit"
+            "SQLVM Help:\n\n"
+            "Database Operations:\n"
+            "- CREATE DATABASE database_name;\n"
+            "- DROP DATABASE [IF EXISTS] database_name;\n"
+            "- USE database_name;\n"
+            "- SHOW DATABASES;\n"
+            "- SHOW TABLES;\n\n"
+            "Table Operations:\n"
+            "- CREATE TABLE table_name (\n"
+            "    id INT AUTO_INCREMENT PRIMARY KEY,\n"
+            "    name VARCHAR(255),\n"
+            "    age INT\n"
+            "  );\n\n"
+            "Data Operations:\n"
+            "- INSERT INTO table_name VALUES (val1, val2, ...);\n"
+            "- INSERT INTO table_name (col1, col2) VALUES (val1, val2);\n"
+            "- SELECT * FROM table_name;\n"
+            "- SELECT col1, col2 FROM table_name;\n"
+            "- UPDATE table_name SET col=value WHERE condition;\n"
+            "- DELETE FROM table_name WHERE condition;\n\n"
+            "Export Operations:\n"
+            "- EXPORT DATABASE db_name TO SQL [file_path];\n"
+            "- EXPORT DATABASE db_name TO JSON [file_path];\n"
+            "- EXPORT ALL TO SQL [file_path];\n"
+            "- EXPORT ALL TO JSON [file_path];\n\n"
+            "Note: For VARCHAR type, always specify length like VARCHAR(255)"
         )
         messagebox.showinfo("Help", help_text)
 

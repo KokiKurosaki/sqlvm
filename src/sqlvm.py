@@ -66,30 +66,53 @@ class SQLVM:
         indexes = {}
         
         for coldef in columns_def.split(","):
-            parts = coldef.strip().split()
-            if len(parts) == 1:
-                col, typ = parts[0], "TEXT"
+            # Parse column definition with regex to handle VARCHAR(n) and other types with parameters
+            col_match = re.match(r'(\w+)\s+(\w+)(?:\((\d+)\))?(.*)$', coldef.strip(), re.I)
+            
+            if not col_match:
+                # Handle the simplest case where only column name is provided
+                col = coldef.strip()
+                typ = "TEXT"
                 auto_increment = False
                 index_type = None
             else:
-                col = parts[0]
-                typ = parts[1].upper()
-                auto_increment = "AUTO_INCREMENT" in [p.upper() for p in parts[2:]] if len(parts) > 2 else False
-                # Check for index types
-                index_options = ["PRIMARY", "UNIQUE", "INDEX", "FULLTEXT", "SPATIAL"]
+                # Extract from regex match
+                col = col_match.group(1)
+                base_type = col_match.group(2).upper()
+                type_param = col_match.group(3)  # Size parameter (e.g. VARCHAR(255))
+                modifiers = col_match.group(4).upper() if col_match.group(4) else ""
+                
+                # Build the full type with parameters
+                if type_param:
+                    typ = f"{base_type}({type_param})"
+                else:
+                    typ = base_type
+                
+                # Check for AUTO_INCREMENT in modifiers
+                auto_increment = "AUTO_INCREMENT" in modifiers
+                
+                # Check for index types - converting PRIMARY to PRIMARY KEY for SQL compliance
+                index_options = {"PRIMARY KEY": "PRIMARY KEY", "UNIQUE KEY": "UNIQUE KEY", 
+                                "UNIQUE": "UNIQUE", "INDEX": "INDEX", "KEY": "KEY", 
+                                "FULLTEXT": "FULLTEXT", "SPATIAL": "SPATIAL"}
                 index_type = None
-                for idx_type in index_options:
-                    if idx_type in [p.upper() for p in parts[2:]]:
-                        index_type = idx_type
-                        break
+                
+                # Also check for the legacy "PRIMARY" keyword and convert to "PRIMARY KEY"
+                if "PRIMARY" in modifiers and "PRIMARY KEY" not in modifiers:
+                    index_type = "PRIMARY KEY"
+                else:
+                    for idx_name, idx_value in index_options.items():
+                        if idx_name in modifiers:
+                            index_type = idx_value
+                            break
             
             columns.append(col)
             types[col] = typ
             if auto_increment:
                 auto_increment_cols.append(col)
                 # Make AUTO_INCREMENT columns PRIMARY KEY by default if no other index type specified
-                if not index_type and typ.upper() == "INT":
-                    index_type = "PRIMARY"
+                if not index_type and typ.upper().startswith("INT"):
+                    index_type = "PRIMARY KEY"
             if index_type:
                 indexes[col] = index_type
         
@@ -99,19 +122,22 @@ class SQLVM:
         """
         Convert string value to the given SQL type.
         """
-        if typ in ("TEXT", "CHAR", "VARCHAR"):
+        # Extract base type without size parameter
+        base_type = re.match(r'(\w+)(?:\(\d+\))?', typ).group(1).upper()
+        
+        if base_type in ("TEXT", "CHAR", "VARCHAR"):
             return str(value)
-        elif typ == "INT":
+        elif base_type == "INT":
             try:
                 return int(value)
             except Exception:
                 raise ValueError(f"Invalid INT value: {value}")
-        elif typ == "FLOAT":
+        elif base_type == "FLOAT":
             try:
                 return float(value)
             except Exception:
                 raise ValueError(f"Invalid FLOAT value: {value}")
-        elif typ == "BOOL":
+        elif base_type == "BOOL":
             if str(value).lower() in ("1", "true", "yes", "on"):
                 return True
             elif str(value).lower() in ("0", "false", "no", "off"):
@@ -133,12 +159,12 @@ class SQLVM:
         if len(auto_increment_cols) > 1:
             return "Error: Incorrect table definition; there can be only one auto column and it must be defined as a key"
         
-        # Check that AUTO_INCREMENT column is defined as a key (PRIMARY, UNIQUE or INDEX)
+        # Check that AUTO_INCREMENT column is defined as a key (PRIMARY KEY, UNIQUE or INDEX)
         if auto_increment_cols and auto_increment_cols[0] not in indexes:
             return "Error: Incorrect table definition; there can be only one auto column and it must be defined as a key"
             
-        # Validate indexes - check for multiple PRIMARY KEYs
-        primary_keys = [col for col, idx_type in indexes.items() if idx_type == "PRIMARY"]
+        # Validate indexes - check for multiple PRIMARY KEY definitions
+        primary_keys = [col for col, idx_type in indexes.items() if idx_type == "PRIMARY KEY"]
         if len(primary_keys) > 1:
             return f"Error: Multiple PRIMARY KEY definitions. A table can have only one primary key."
         
@@ -231,13 +257,13 @@ class SQLVM:
         
         # Second pass: check index constraints
         for col, index_type in indexes.items():
-            if index_type in ["PRIMARY", "UNIQUE"]:
+            if index_type in ["PRIMARY KEY", "UNIQUE"]:
                 value = new_row.get(col)
                 # Check for duplicates in existing rows
                 for row in table["rows"]:
                     if row.get(col) == value:
-                        if index_type == "PRIMARY":
-                            return f"Error: Duplicate entry '{value}' for key 'PRIMARY'"
+                        if index_type == "PRIMARY KEY":
+                            return f"Error: Duplicate entry '{value}' for key 'PRIMARY KEY'"
                         else:
                             return f"Error: Duplicate entry '{value}' for key '{col}'"
         
@@ -336,6 +362,36 @@ class SQLVM:
             except Exception:
                 pass
         return row.get(col) == value
+
+    def export_to_sql(self, db_name=None, file_path=None):
+        """
+        Export database(s) to SQL format
+        
+        Args:
+            db_name: Specific database to export (None for all)
+            file_path: Path to save the SQL file (None for auto-generated)
+            
+        Returns:
+            Success message
+        """
+        from .export import SQLVMExporter
+        message, _ = SQLVMExporter.export_to_sql(self, db_name, file_path)
+        return message
+    
+    def export_to_json(self, db_name=None, file_path=None):
+        """
+        Export database(s) to JSON format
+        
+        Args:
+            db_name: Specific database to export (None for all)
+            file_path: Path to save the JSON file (None for auto-generated)
+            
+        Returns:
+            Success message
+        """
+        from .export import SQLVMExporter
+        message, _ = SQLVMExporter.export_to_json(self, db_name, file_path)
+        return message
 
     def execute_command(self, command):
         # Clean up the command - remove extra whitespace, newlines, and trailing semicolon
@@ -440,4 +496,31 @@ class SQLVM:
                 table_name = match.group(1)
                 where = match.group(2)
                 return self.delete(table_name, where)
+        elif cmd == "EXPORT":
+            # EXPORT DATABASE db_name TO SQL file_path
+            match_export_sql = re.match(r"EXPORT DATABASE (\w+) TO SQL(?:\s+(.+))?", command, re.I)
+            if match_export_sql:
+                db_name = match_export_sql.group(1)
+                file_path = match_export_sql.group(2).strip() if match_export_sql.group(2) else None
+                return self.export_to_sql(db_name, file_path)
+                
+            # EXPORT ALL TO SQL file_path
+            match_export_all_sql = re.match(r"EXPORT ALL TO SQL(?:\s+(.+))?", command, re.I)
+            if match_export_all_sql:
+                file_path = match_export_all_sql.group(1).strip() if match_export_all_sql.group(1) else None
+                return self.export_to_sql(None, file_path)
+                
+            # EXPORT DATABASE db_name TO JSON file_path
+            match_export_json = re.match(r"EXPORT DATABASE (\w+) TO JSON(?:\s+(.+))?", command, re.I)
+            if match_export_json:
+                db_name = match_export_json.group(1)
+                file_path = match_export_json.group(2).strip() if match_export_json.group(2) else None
+                return self.export_to_json(db_name, file_path)
+                
+            # EXPORT ALL TO JSON file_path
+            match_export_all_json = re.match(r"EXPORT ALL TO JSON(?:\s+(.+))?", command, re.I)
+            if match_export_all_json:
+                file_path = match_export_all_json.group(1).strip() if match_export_all_json.group(1) else None
+                return self.export_to_json(None, file_path)
+                
         return "Error: Invalid command."
