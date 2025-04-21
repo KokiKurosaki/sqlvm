@@ -9,6 +9,47 @@ class SQLParser:
         original_command = command.strip()
         command = original_command.upper()
 
+        if command.startswith("SELECT"):
+            # Match SELECT queries with nested subqueries in the IN condition
+            match_nested_subquery = re.match(r"SELECT (.+) FROM (\w+) WHERE (.+) IN \((SELECT .+ IN \(.+\))\)", original_command, re.I)
+            if match_nested_subquery:
+                columns = match_nested_subquery.group(1)
+                table_name = match_nested_subquery.group(2)
+                condition_column = match_nested_subquery.group(3)
+                nested_subquery = match_nested_subquery.group(4)
+                return [("SELECT_ROWS", table_name, columns, f"{condition_column} IN ({nested_subquery})")]
+
+            # Match SELECT queries with single-level subqueries in the IN condition
+            match_where_in = re.match(r"SELECT (.+) FROM (\w+) WHERE (.+) IN \((SELECT .+)\)", original_command, re.I)
+            if match_where_in:
+                columns = match_where_in.group(1)
+                table_name = match_where_in.group(2)
+                condition_column = match_where_in.group(3)
+                subquery = match_where_in.group(4)
+                return [("SELECT_ROWS", table_name, columns, f"{condition_column} IN ({subquery})")]
+
+            # Match SELECT queries with static IN values
+            match_where_in_static = re.match(r"SELECT (.+) FROM (\w+) WHERE (.+) IN \((.*)\)", original_command, re.I)
+            if match_where_in_static:
+                columns = match_where_in_static.group(1)
+                table_name = match_where_in_static.group(2)
+                condition_column = match_where_in_static.group(3)
+                in_values = match_where_in_static.group(4).strip()
+
+                # Handle empty IN condition
+                if not in_values:
+                    return [("SELECT_ROWS", table_name, columns, f"{condition_column} IN ()")]
+
+                return [("SELECT_ROWS", table_name, columns, f"{condition_column} IN ({in_values})")]
+
+            # Match simple SELECT queries
+            match = re.match(r"SELECT (.+) FROM (\w+)", original_command, re.I)
+            if match:
+                columns = match.group(1)
+                table_name = match.group(2)
+                return [("SELECT_ROWS", table_name, columns)]
+
+        # Handle other commands (existing logic)
         if command.startswith("CREATE DATABASE"):
             match = re.match(r"CREATE DATABASE (\w+)", original_command, re.I)
             if match:
@@ -47,12 +88,6 @@ class SQLParser:
                 columns = [col.strip() for col in match.group(2).split(",")]
                 values = [v.strip().strip('"').strip("'") for v in match.group(3).split(",")]
                 return [("INSERT_ROW", table_name, values, columns)]
-        elif command.startswith("SELECT"):
-            match = re.match(r"SELECT (.+) FROM (\w+)", original_command, re.I)
-            if match:
-                columns = match.group(1)
-                table_name = match.group(2)
-                return [("SELECT_ROWS", table_name, columns)]
         elif command.startswith("ALTER TABLE"):
             match_add = re.match(r"ALTER TABLE (\w+) ADD (.+)", original_command, re.I)
             if match_add:

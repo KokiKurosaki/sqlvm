@@ -2,6 +2,7 @@ import re
 import time  # Import the time module
 from .parser import SQLParser
 from .vm import SQLVMInterpreter
+import ast
 
 class SQLVM:
     def __init__(self):
@@ -315,6 +316,86 @@ class SQLVM:
             
         return result
 
+    def select(self, table_name, columns="*", where=None):
+        print(f"DEBUG: select called with table_name={table_name}, columns={columns}, where={where}")
+        if self.current_db is None:
+            return "Error: No database selected. Use USE database_name;"
+        if table_name not in self.tables:
+            return f"Error: Table {table_name} does not exist."
+        table = self.tables[table_name]
+        if columns == "*":
+            columns = table["columns"]
+        else:
+            columns = [col.strip() for col in columns.split(",")]
+
+        # Calculate the maximum width for each column
+        widths = {col: len(col) for col in columns}
+        filtered_rows = table["rows"]
+
+        # Handle WHERE clause with subquery results
+        if where:
+            print(f"DEBUG: WHERE clause detected: {where}")
+            if "IN" in where:
+                # Split the condition into column and values
+                col, subquery_values = where.split("IN")
+                col = col.strip()
+                subquery_values = subquery_values.strip()
+
+                # Debug: Print the raw column and values
+                print(f"DEBUG: Raw column: {col}, Raw values: {subquery_values}")
+
+                # Remove parentheses and parse the values
+                if subquery_values.startswith("(") and subquery_values.endswith(")"):
+                    subquery_values = subquery_values[1:-1].strip()
+
+                # Convert the subquery values into a list
+                try:
+                    # Safely parse the values using ast.literal_eval
+                    if subquery_values:
+                        subquery_values = ast.literal_eval(f"[{subquery_values}]")
+                    else:
+                        subquery_values = []  # Handle empty IN condition
+                    if not isinstance(subquery_values, list):
+                        raise ValueError
+                except Exception:
+                    return f"Error: Invalid IN condition values '{subquery_values}'."
+
+                # Debug: Print the parsed column and values
+                print(f"DEBUG: Parsed column: {col}, Parsed values: {subquery_values}")
+
+                # Use the in_condition method
+                try:
+                    filtered_rows = self.in_condition(table_name, col, subquery_values)
+                except ValueError as e:
+                    return str(e)
+            else:
+                # Handle other conditions
+                filtered_rows = [row for row in table["rows"] if self._evaluate_condition(row, where)]
+
+        # Adjust column widths based on the filtered rows
+        for row in filtered_rows:
+            for col in columns:
+                value_width = len(str(row.get(col, 'NULL')))
+                if col in widths:
+                    widths[col] = max(widths[col], value_width)
+
+        # Format with clear column boundaries using vertical bars
+        header = "| " + " | ".join(col.ljust(widths[col]) for col in columns) + " |"
+        separator = "+" + "+".join("-" * (widths[col] + 2) for col in columns) + "+"
+        formatted_rows = []
+        for row in filtered_rows:
+            formatted_row = "| " + " | ".join(str(row.get(col, 'NULL')).ljust(widths[col]) for col in columns) + " |"
+            formatted_rows.append(formatted_row)
+
+        # Combine everything with clear boundaries
+        result = separator + "\n" + header + "\n" + separator + "\n"
+        if formatted_rows:
+            result += "\n".join(formatted_rows) + "\n" + separator
+        else:
+            result += separator  # Bottom line for empty result set
+
+        return result
+
     def update(self, table_name, set_values, where=None):
         if (self.current_db is None):
             return "Error: No database selected. Use USE database_name;"
@@ -478,11 +559,53 @@ class SQLVM:
         else:
             return f"Error: Unsupported ALTER TABLE operation '{operation}'."
 
+    def in_condition(self, table_name, column, values):
+        print(f"DEBUG: in_condition called with table_name={table_name}, column={column}, values={values}")
+        if self.current_db is None:
+            raise ValueError("Error: No database selected. Use USE database_name;")
+        if table_name not in self.tables:
+            raise ValueError(f"Error: Table {table_name} does not exist.")
+        table = self.tables[table_name]
+
+        # Ensure the column exists in the table
+        if column not in table["columns"]:
+            raise ValueError(f"Error: Column '{column}' does not exist in table '{table_name}'.")
+
+        # Ensure values is a list
+        if not isinstance(values, list):
+            raise ValueError(f"Error: IN condition values must be a list. Got '{type(values).__name__}' instead.")
+
+        # If values is empty, return no rows
+        if not values:
+            return []
+
+        # Get the column type
+        column_type = table["types"].get(column, "TEXT")
+
+        # Convert values to the column type
+        try:
+            converted_values = [self._convert_value(value, column_type) for value in values]
+        except ValueError as e:
+            raise ValueError(f"Error: {e}. Ensure the values in the IN condition match the column type '{column_type}'.")
+
+        # Debug: Print the converted values
+        print(f"DEBUG: Converted values for IN condition: {converted_values}")
+
+        # Filter rows based on the IN condition
+        filtered_rows = [row for row in table["rows"] if row.get(column) in converted_values]
+
+        # Debug: Print the filtered rows
+        print(f"DEBUG: Filtered rows: {filtered_rows}")
+
+        return filtered_rows
+
     def execute_command(self, command):
+        print(f"DEBUG: execute_command called with command={command}")
         import time  # Ensure the time module is imported
         start_time = time.time()  # Record the start time
 
         bytecode = SQLParser.parse_to_bytecode(command)
+        print(f"DEBUG: Parsed bytecode: {bytecode}")
         results = self.vm.execute_bytecode(bytecode)
         result_output = "\n".join(results)
 
@@ -492,3 +615,4 @@ class SQLVM:
         # Append execution time to the result
         result_output += f"\n(Execution time: {elapsed_time:.4f} seconds)"
         return result_output
+
