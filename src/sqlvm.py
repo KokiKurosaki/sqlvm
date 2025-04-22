@@ -628,6 +628,215 @@ class SQLVM:
         message, _ = SQLVMExporter.export_to_json(self, db_name, file_path)
         return message
 
+    def import_from_sql(self, db_name, file_path):
+        """
+        Import SQL file into a database
+        
+        Args:
+            db_name: Target database to import into
+            file_path: Path to the SQL file
+            
+        Returns:
+            Success message
+        """
+        from .importer import SQLVMImporter
+        message, _, _ = SQLVMImporter.import_from_sql(self, db_name, file_path)
+        return message
+
+    def import_from_json(self, db_name, file_path):
+        """
+        Import JSON file into a database
+        
+        Args:
+            db_name: Target database to import into
+            file_path: Path to the JSON file
+            
+        Returns:
+            Success message
+        """
+        from .importer import SQLVMImporter
+        message, _, _ = SQLVMImporter.import_from_json(self, db_name, file_path)
+        return message
+
+    def execute_command(self, command):
+        command = command.strip()
+        
+        # Handle DROP TABLE command
+        if command.upper().startswith("DROP TABLE "):
+            try:
+                # Extract table name
+                table_name = command[len("DROP TABLE "):].strip().split()[0].strip(';').strip()
+                
+                # Check if the table exists
+                if table_name not in self.tables:
+                    return f"Error: Table '{table_name}' does not exist"
+                
+                # Remove the table from the current database
+                current_db = self.current_db
+                if current_db not in self.databases:
+                    return f"Error: No database selected"
+                
+                # Remove the table from the database structure
+                if table_name in self.databases[current_db]:
+                    del self.databases[current_db][table_name]
+                    # Also remove from the tables dictionary
+                    if table_name in self.tables:
+                        del self.tables[table_name]
+                    return f"Table '{table_name}' dropped"
+                else:
+                    return f"Error: Table '{table_name}' not found in database '{current_db}'"
+            except Exception as e:
+                return f"Error dropping table: {str(e)}"
+        
+        # Clean up the command - remove extra whitespace, newlines, and trailing semicolon
+        command = re.sub(r'\s+', ' ', command.strip().rstrip(";"))
+        
+        parts = command.split(" ", 1)
+        cmd = parts[0].upper()
+
+        # Database commands
+        if cmd == "CREATE":
+            # CREATE DATABASE
+            match_db = re.match(r"CREATE DATABASE (\w+)", command, re.I)
+            if match_db:
+                db_name = match_db.group(1)
+                return self.create_database(db_name)
+            # CREATE TABLE
+            match = re.match(r"CREATE TABLE (\w+) \((.+)\)", command, re.I)
+            if match:
+                table_name = match.group(1)
+                columns_def = match.group(2)
+                return self.create_table(table_name, columns_def)
+        elif cmd == "DROP":
+            # DROP DATABASE [IF EXISTS] db_name
+            match = re.match(r"DROP DATABASE(?: IF EXISTS)? (\w+)", command, re.I)
+            if match:
+                db_name = match.group(1)
+                if_exists = "IF EXISTS" in command.upper()
+                return self.drop_database(db_name, if_exists)
+        elif cmd == "USE":
+            # USE db_name
+            match = re.match(r"USE (\w+)", command, re.I)
+            if match:
+                db_name = match.group(1)
+                return self.use_database(db_name)
+        elif cmd == "SHOW":
+            # SHOW DATABASES
+            if command.upper() == "SHOW DATABASES":
+                return self.show_databases()
+            # SHOW TABLES
+            if command.upper() == "SHOW TABLES":
+                return self.show_tables()
+        elif cmd == "INSERT":
+            # Match INSERT INTO table VALUES (...) format
+            match_simple = re.match(r"INSERT INTO (\w+) VALUES \((.+)\)", command)
+            if match_simple:
+                table_name = match_simple.group(1)
+                values_str = match_simple.group(2)
+                pattern = r'''
+                    "([^"]*)"           # double-quoted string
+                    |                   # or
+                    ([^,\s][^,]*)       # unquoted value (numbers, booleans, etc.)
+                '''
+                values = []
+                for m in re.finditer(pattern, values_str, re.VERBOSE):
+                    if m.group(1) is not None:
+                        values.append(m.group(1))
+                    elif m.group(2) is not None:
+                        values.append(m.group(2).strip())
+                return self.insert(table_name, values)
+            
+            # Match INSERT INTO table (col1, col2) VALUES (...) format
+            match_columns = re.match(r"INSERT INTO (\w+) \((.+?)\) VALUES \((.+)\)", command, re.IGNORECASE)
+            if match_columns:
+                table_name = match_columns.group(1)
+                columns_str = match_columns.group(2)
+                values_str = match_columns.group(3)
+                
+                # Extract column names
+                columns = [col.strip(' `\'\"') for col in columns_str.split(',')]
+                
+                # Extract values
+                pattern = r'''
+                    "([^"]*)"           # double-quoted string
+                    |                   # or
+                    ([^,\s][^,]*)       # unquoted value (numbers, booleans, etc.)
+                '''
+                values = []
+                for m in re.finditer(pattern, values_str, re.VERBOSE):
+                    if m.group(1) is not None:
+                        values.append(m.group(1))
+                    elif m.group(2) is not None:
+                        values.append(m.group(2).strip())
+                
+                return self.insert(table_name, values, columns)
+            
+        elif cmd == "SELECT":
+            # Updated to handle WHERE clause with complex conditions
+            match = re.match(r"SELECT (.+) FROM (\w+)(?:\s+WHERE\s+(.+))?", command, re.I)
+            if match:
+                columns = match.group(1)
+                table_name = match.group(2)
+                where = match.group(3)
+                return self.select(table_name, columns, where)
+        elif cmd == "UPDATE":
+            # Allow complex WHERE clauses with AND/OR
+            match = re.match(r"UPDATE (\w+) SET (.+) WHERE (.+)", command)
+            if match:
+                table_name = match.group(1)
+                set_values = match.group(2)
+                where = match.group(3)
+                return self.update(table_name, set_values, where)
+        elif cmd == "DELETE":
+            # Allow complex WHERE clauses with AND/OR
+            match = re.match(r"DELETE FROM (\w+) WHERE (.+)", command)
+            if match:
+                table_name = match.group(1)
+                where = match.group(2)
+                return self.delete(table_name, where)
+        elif cmd == "EXPORT":
+            # EXPORT DATABASE db_name TO SQL file_path
+            match_export_sql = re.match(r"EXPORT DATABASE (\w+) TO SQL(?:\s+(.+))?", command, re.I)
+            if match_export_sql:
+                db_name = match_export_sql.group(1)
+                file_path = match_export_sql.group(2).strip() if match_export_sql.group(2) else None
+                return self.export_to_sql(db_name, file_path)
+                
+            # EXPORT ALL TO SQL file_path
+            match_export_all_sql = re.match(r"EXPORT ALL TO SQL(?:\s+(.+))?", command, re.I)
+            if match_export_all_sql:
+                file_path = match_export_all_sql.group(1).strip() if match_export_all_sql.group(1) else None
+                return self.export_to_sql(None, file_path)
+                
+            # EXPORT DATABASE db_name TO JSON file_path
+            match_export_json = re.match(r"EXPORT DATABASE (\w+) TO JSON(?:\s+(.+))?", command, re.I)
+            if match_export_json:
+                db_name = match_export_json.group(1)
+                file_path = match_export_json.group(2).strip() if match_export_json.group(2) else None
+                return self.export_to_json(db_name, file_path)
+                
+            # EXPORT ALL TO JSON file_path
+            match_export_all_json = re.match(r"EXPORT ALL TO JSON(?:\s+(.+))?", command, re.I)
+            if match_export_all_json:
+                file_path = match_export_all_json.group(1).strip() if match_export_all_json.group(1) else None
+                return self.export_to_json(None, file_path)
+                
+        elif cmd == "IMPORT":
+            # IMPORT DATABASE db_name FROM SQL file_path
+            match_import_sql = re.match(r"IMPORT DATABASE (\w+) FROM SQL(?:\s+(.+))?", command, re.I)
+            if match_import_sql:
+                db_name = match_import_sql.group(1)
+                file_path = match_import_sql.group(2).strip() if match_import_sql.group(2) else None
+                return self.import_from_sql(db_name, file_path)
+                
+            # IMPORT DATABASE db_name FROM JSON file_path
+            match_import_json = re.match(r"IMPORT DATABASE (\w+) FROM JSON(?:\s+(.+))?", command, re.I)
+            if match_import_json:
+                db_name = match_import_json.group(1)
+                file_path = match_import_json.group(2).strip() if match_import_json.group(2) else None
+                return self.import_from_json(db_name, file_path)
+                
+        return "Error: Invalid command."
     def alter_table(self, table_name, operation, column_def=None):
         if (self.current_db is None):
             return "Error: No database selected. Use USE database_name;"
