@@ -328,52 +328,6 @@ class SQLVM:
         table["rows"].append(new_row)
         return f"Inserted {display_values} into {table_name}."
 
-    def select(self, table_name, columns="*"):
-        print(f"DEBUG: select called with table_name={table_name}, columns={columns}, where={where}")
-        if self.current_db is None:
-            return "Error: No database selected. Use USE database_name;"
-        if table_name not in self.tables:
-            return f"Error: Table {table_name} does not exist."
-        table = self.tables[table_name]
-        if columns == "*":
-            columns = table["columns"]
-        else:
-            # Parse columns more carefully to handle expressions
-            columns = [col.strip() for col in columns.split(",")]
-
-        # Calculate the maximum width for each column
-        widths = {col: len(col) for col in columns}
-        filtered_rows = table["rows"]
-
-        # Handle WHERE clause
-        if where:
-            print(f"DEBUG: WHERE clause detected: {where}")
-            filtered_rows = [row for row in table["rows"] if self._evaluate_condition(row, where)]
-
-        # Adjust column widths based on the filtered rows
-        for row in filtered_rows:
-            for col in columns:
-                value_width = len(str(row.get(col, 'NULL')))
-                if col in widths:
-                    widths[col] = max(widths[col], value_width)
-
-        # Format with clear column boundaries using vertical bars
-        header = "| " + " | ".join(col.ljust(widths[col]) for col in columns) + " |"
-        separator = "+" + "+".join("-" * (widths[col] + 2) for col in columns) + "+"
-        formatted_rows = []
-        for row in filtered_rows:
-            formatted_row = "| " + " | ".join(str(row.get(col, 'NULL')).ljust(widths[col]) for col in columns) + " |"
-            formatted_rows.append(formatted_row)
-
-        # Combine everything with clear boundaries
-        result = separator + "\n" + header + "\n" + separator + "\n"
-        if formatted_rows:
-            result += "\n".join(formatted_rows) + "\n" + separator
-        else:
-            result += separator  # Bottom line for empty result set
-
-        return result
-
     def select(self, table_name, columns="*", where=None):
         print(f"DEBUG: select called with table_name={table_name}, columns={columns}, where={where}")
         if self.current_db is None:
@@ -390,40 +344,40 @@ class SQLVM:
         widths = {col: len(col) for col in columns}
         filtered_rows = table["rows"]
 
-        # Handle WHERE clause with subquery results
+        # Handle WHERE clause
         if where:
             print(f"DEBUG: WHERE clause detected: {where}")
-            if "IN" in where:
+            if "IN" in where.upper():
                 # Split the condition into column and values
-                col, subquery_values = where.split("IN")
+                col, values_str = where.split("IN", 1)
                 col = col.strip()
-                subquery_values = subquery_values.strip()
+                values_str = values_str.strip().rstrip(";")  # Remove trailing semicolon
 
-                # Debug: Print the raw column and values
-                print(f"DEBUG: Raw column: {col}, Raw values: {subquery_values}")
-
-                # Remove parentheses and parse the values
-                if subquery_values.startswith("(") and subquery_values.endswith(")"):
-                    subquery_values = subquery_values[1:-1].strip()
-
-                # Convert the subquery values into a list
-                try:
-                    # Safely parse the values using ast.literal_eval
-                    if subquery_values:
-                        subquery_values = ast.literal_eval(f"[{subquery_values}]")
+                # Check if it's a subquery
+                if values_str.startswith("(") and values_str.endswith(")"):
+                    subquery = values_str[1:-1].strip()
+                    if (subquery.upper().startswith("SELECT")):
+                        # Execute the subquery and get the result
+                        subquery_result = self.execute_command(subquery)
+                        print(f"DEBUG: Subquery result: {subquery_result}")
+                        # Extract the values from the subquery result
+                        values = [row.split("|")[1].strip() for row in subquery_result.split("\n")[3:-2]]
+                        # Convert numeric values to integers where applicable
+                        values = [int(v) if v.isdigit() else v for v in values]
                     else:
-                        subquery_values = []  # Handle empty IN condition
-                    if not isinstance(subquery_values, list):
-                        raise ValueError
-                except Exception:
-                    return f"Error: Invalid IN condition values '{subquery_values}'."
+                        # Parse the values directly
+                        values_str = values_str[1:-1].strip()
+                        values = [v.strip().strip("'").strip('"') for v in values_str.split(",") if v.strip()]
+                        values = [int(v) if v.isdigit() else v for v in values]
+                else:
+                    return f"Error: Invalid IN condition format '{values_str}'."
 
                 # Debug: Print the parsed column and values
-                print(f"DEBUG: Parsed column: {col}, Parsed values: {subquery_values}")
+                print(f"DEBUG: Parsed column: {col}, Parsed values: {values}")
 
                 # Use the in_condition method
                 try:
-                    filtered_rows = self.in_condition(table_name, col, subquery_values)
+                    filtered_rows = self.in_condition(table_name, col, values)
                 except ValueError as e:
                     return str(e)
             else:
@@ -491,33 +445,158 @@ class SQLVM:
         return f"Deleted {deleted_count} row/s from {table_name}."
 
     def _evaluate_condition(self, row, condition):
+        """
+        Evaluate a WHERE condition against a row.
+        Now supports complex conditions with AND/OR operators and nested parentheses.
+        """
         # Strip any trailing semicolons
         condition = condition.strip(";").strip()
+        print(f"DEBUG: Evaluating condition: {condition}")
 
-        # Split the condition into column and value
+        # Handle parenthesized expressions first
+        while "(" in condition and ")" in condition:
+            # Find the innermost parentheses
+            start = condition.rfind("(")
+            end = condition.find(")", start)
+            if start == -1 or end == -1:
+                raise ValueError("Unbalanced parentheses in condition.")
+
+            # Extract the inner condition
+            inner_condition = condition[start + 1:end]
+            print(f"DEBUG: Found inner condition: {inner_condition}")
+
+            # Evaluate the inner condition
+            inner_result = self._evaluate_condition(row, inner_condition)
+            print(f"DEBUG: Result of inner condition '{inner_condition}': {inner_result}")
+
+            # Replace the parenthesized expression with its boolean result
+            condition = condition[:start] + str(inner_result) + condition[end + 1:]
+            print(f"DEBUG: Updated condition after resolving parentheses: {condition}")
+
+        # Handle complex conditions with AND
+        if " AND " in condition.upper():
+            parts = condition.split(" AND ", 1)  # Split at first AND
+            left_result = self._evaluate_condition(row, parts[0].strip())
+            right_result = self._evaluate_condition(row, parts[1].strip())
+            print(f"DEBUG: AND condition - Left: {parts[0].strip()} = {left_result}, Right: {parts[1].strip()} = {right_result}")
+            return left_result and right_result
+
+        # Handle complex conditions with OR
+        if " OR " in condition.upper():
+            parts = condition.split(" OR ", 1)  # Split at first OR
+            left_result = self._evaluate_condition(row, parts[0].strip())
+            right_result = self._evaluate_condition(row, parts[1].strip())
+            print(f"DEBUG: OR condition - Left: {parts[0].strip()} = {left_result}, Right: {parts[1].strip()} = {right_result}")
+            return left_result or right_result
+
+        # Handle standard comparison operators
+        for operator in ["!=", "<=", ">=", "=", "<", ">"]:
+            if operator in condition:
+                parts = condition.split(operator, 1)
+                col = parts[0].strip()
+                value_str = parts[1].strip()
+
+                # Remove quotes from string literals
+                if value_str.startswith("'") and value_str.endswith("'"):
+                    value_str = value_str[1:-1]
+                elif value_str.startswith('"') and value_str.endswith('"'):
+                    value_str = value_str[1:-1]
+
+                # Get column type and convert value accordingly
+                value = value_str
+                typ = None
+                for table in self.tables.values():
+                    if "types" in table and col in table["types"]:
+                        typ = table["types"][col]
+                        break
+
+                if typ:
+                    try:
+                        value = self._convert_value(value_str, typ)
+                    except Exception:
+                        pass
+
+                # Get row value
+                row_value = row.get(col)
+                print(f"DEBUG: Comparing column '{col}' with value '{value}' using operator '{operator}'. Row value: {row_value}")
+
+                # Handle None values
+                if row_value is None:
+                    return False
+
+                # Compare based on operator
+                if operator == "=":
+                    return row_value == value
+                elif operator == "!=":
+                    return row_value != value
+                elif operator == "<":
+                    return row_value < value
+                elif operator == ">":
+                    return row_value > value
+                elif operator == "<=":
+                    return row_value <= value
+                elif operator == ">=":
+                    return row_value >= value
+
+        # Handle LIKE operator
+        if " LIKE " in condition.upper():
+            parts = condition.split(" LIKE ", 1)
+            col = parts[0].strip()
+            pattern = parts[1].strip()
+
+            # Remove quotes from pattern
+            if pattern.startswith("'") and pattern.endswith("'"):
+                pattern = pattern[1:-1]
+            elif pattern.startswith('"') and pattern.endswith('"'):
+                pattern = pattern[1:-1]
+
+            # Convert SQL LIKE pattern to regex pattern
+            try:
+                pattern = pattern.replace("%", ".*").replace("_", ".")
+                pattern = f"^{pattern}$"
+                row_value = str(row.get(col, ""))
+                if row_value is None:
+                    return False
+                match_result = bool(re.match(pattern, row_value, re.IGNORECASE))
+                print(f"DEBUG: LIKE operator - column: {col}, pattern: {pattern}, row_value: {row_value}, match_result: {match_result}")
+                return match_result
+            except re.error as e:
+                print(f"DEBUG: Invalid regex pattern '{pattern}' - {e}")
+                return False
+
+        # Handle IN operator
+        if " IN " in condition.upper():
+            parts = condition.split(" IN ", 1)
+            col = parts[0].strip()
+            values_str = parts[1].strip()
+
+            # Parse values in parentheses
+            if values_str.startswith("(") and values_str.endswith(")"):
+                values_str = values_str[1:-1]
+
+                # Split by comma and handle quoted values
+                values = []
+                for val in re.findall(r'(?:[^,"]|"(?:\\.|[^"])*")+', values_str):
+                    val = val.strip()
+                    if val.startswith("'") and val.endswith("'"):
+                        val = val[1:-1]
+                    elif val.startswith('"') and val.endswith('"'):
+                        val = val[1:-1]
+                    values.append(val)
+
+                row_value = row.get(col)
+                print(f"DEBUG: IN operator - column: {col}, values: {values}, row_value: {row_value}")
+                return row_value in values
+
+        # Fallback to simple equality check for backward compatibility
         if "=" in condition:
-            col, value = condition.split("=")
+            col, value = condition.split("=", 1)
             col = col.strip()
             value = value.strip().strip('"').strip("'")
-        else:
-            return False  # Unsupported condition format
+            print(f"DEBUG: Fallback equality check - column: {col}, value: {value}, row_value: {row.get(col)}")
+            return row.get(col) == value
 
-        # Get the column type from the table schema
-        typ = None
-        for table in self.tables.values():
-            if "types" in table and col in table["types"]:
-                typ = table["types"][col]
-                break
-
-        # Convert the value to the appropriate type
-        if typ:
-            try:
-                value = self._convert_value(value, typ)
-            except Exception:
-                pass
-
-        # Compare the row's column value with the condition value
-        return row.get(col) == value
+        return False
 
     def export_to_sql(self, db_name=None, file_path=None):
         """

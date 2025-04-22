@@ -34,6 +34,22 @@ class SQLParser:
                 columns = match_where.group(1)
                 table_name = match_where.group(2)
                 where_clause = match_where.group(3)
+                # Handle parentheses in WHERE clause
+                if "(" in where_clause and ")" in where_clause:
+                    # Ensure parentheses are balanced
+                    open_parens = where_clause.count("(")
+                    close_parens = where_clause.count(")")
+                    if open_parens != close_parens:
+                        raise ValueError("Unbalanced parentheses in WHERE clause.")
+
+                    # Check if the parentheses contain a subquery
+                    if "SELECT" in where_clause.upper():
+                        # Subquery detected, leave as-is for further processing
+                        pass
+                    else:
+                        # Parentheses are not a subquery, ensure proper parsing
+                        where_clause = where_clause.strip()
+
                 return [("SELECT_ROWS", table_name, columns, where_clause)]
 
             # Match SELECT queries with static IN values
