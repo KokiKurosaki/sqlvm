@@ -13,10 +13,12 @@ import tkinter as tk
 
 # Import from the gui.main_app module
 try:
+    # Make sure we're importing the correct way
     from src.gui.main_app import SQLVMApp
     print("Successfully imported SQLVMApp")
 except Exception as e:
     print(f"Error importing SQLVMApp: {e}")
+    sys.exit(1)
 
 def main():
     root = tk.Tk()

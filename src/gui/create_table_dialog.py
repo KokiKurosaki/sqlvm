@@ -93,6 +93,7 @@ class CreateTableDialog:
         
         ttk.Button(button_frame, text="Save", command=self.create_table).pack(side=tk.RIGHT, padx=5)
         ttk.Button(button_frame, text="Cancel", command=self.dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Preview SQL", command=self.preview_sql).pack(side=tk.RIGHT, padx=5)
     
     def on_frame_configure(self, event=None):
         """Update the canvas's scroll region when the scroll_frame changes size"""
@@ -254,6 +255,27 @@ class CreateTableDialog:
         
         type_var.trace("w", type_changed)
         
+        # Auto increment changes should sync with PRIMARY KEY
+        def auto_increment_changed(*args):
+            if ai_var.get():
+                # When auto_increment is checked, ensure this column is set as PRIMARY KEY
+                index_var.set("PRIMARY")
+                
+                # Uncheck auto_increment on all other columns
+                for other_col in self.column_frames:
+                    if other_col != column_data and other_col["auto_increment"].get():
+                        other_col["auto_increment"].set(False)
+            
+        ai_var.trace("w", auto_increment_changed)
+        
+        # Index changes should validate auto_increment constraints
+        def index_changed(*args):
+            if ai_var.get() and index_var.get() != "PRIMARY":
+                messagebox.showwarning("Warning", "AUTO_INCREMENT column must be a PRIMARY KEY.\nKeeping PRIMARY KEY setting.")
+                index_var.set("PRIMARY")
+        
+        index_var.trace("w", index_changed)
+        
         # Initial update of field states
         type_changed()
         
@@ -277,6 +299,7 @@ class CreateTableDialog:
         primary_keys = []
         unique_keys = []
         indexes = []
+        auto_increment_cols = []
         
         for col in self.column_frames:
             col_name = col["name"].get().strip()
@@ -290,6 +313,15 @@ class CreateTableDialog:
             if not re.match(r'^[a-zA-Z0-9_]+$', col_name):
                 messagebox.showerror("Error", f"Invalid column name: {col_name}. Use only letters, numbers and underscore.")
                 return
+            
+            # Check for auto increment columns
+            if col["auto_increment"].get():
+                auto_increment_cols.append(col_name)
+                
+                # Validate that auto_increment column is also PRIMARY KEY
+                if col["index"].get() != "PRIMARY":
+                    messagebox.showerror("Error", f"AUTO_INCREMENT column '{col_name}' must be defined as PRIMARY KEY")
+                    return
             
             # Build column definition
             col_def = f"{col_name} {col_type}"
@@ -338,7 +370,12 @@ class CreateTableDialog:
             elif index_type == "INDEX":
                 indexes.append(col_name)
         
-        # Add primary key constraint
+        # Validate auto increment columns - ensure only one exists
+        if len(auto_increment_cols) > 1:
+            messagebox.showerror("Error", "Incorrect table definition; there can be only one auto column and it must be defined as a key")
+            return
+        
+        # Add primary key constraintprimary key, but it can be composite (multiple columns)
         if primary_keys:
             column_defs.append(f"PRIMARY KEY ({', '.join(primary_keys)})")
         
@@ -366,3 +403,146 @@ class CreateTableDialog:
             self.dialog.destroy()
         else:
             messagebox.showerror("Error", result)
+    
+    def preview_sql(self):
+        """Show the SQL command that would be executed to create the table"""
+        table_name = self.table_name_var.get().strip()
+        
+        # Validate table name
+        if not table_name:
+            messagebox.showerror("Error", "Table name cannot be empty")
+            return
+        
+        if not self.db_name:
+            messagebox.showerror("Error", "No database selected")
+            return
+        
+        # Prepare column definitions
+        column_defs = []
+        primary_keys = []
+        unique_keys = []
+        indexes = []
+        auto_increment_cols = []
+        
+        for col in self.column_frames:
+            col_name = col["name"].get().strip()
+            col_type = col["type"].get()
+            
+            # Skip empty column names
+            if not col_name:
+                continue
+                
+            # Validate column name
+            if not re.match(r'^[a-zA-Z0-9_]+$', col_name):
+                messagebox.showerror("Error", f"Invalid column name: {col_name}. Use only letters, numbers and underscore.")
+                return
+            
+            # Check for auto increment columns
+            if col["auto_increment"].get():
+                auto_increment_cols.append(col_name)
+                
+                # Validate that auto_increment column is also PRIMARY KEY
+                if col["index"].get() != "PRIMARY":
+                    messagebox.showerror("Error", f"AUTO_INCREMENT column '{col_name}' must be defined as PRIMARY KEY")
+                    return
+            
+            # Build column definition
+            col_def = f"{col_name} {col_type}"
+            
+            # Add length/values if specified
+            length = col["length"].get().strip()
+            if length:
+                col_def += f"({length})"
+            
+            # Add attributes if specified
+            attr = col["attributes"].get()
+            if attr:
+                col_def += f" {attr}"
+            
+            # Add NULL constraint
+            if not col["null"].get():
+                col_def += " NOT NULL"
+            
+            # Add default value if specified
+            default = col["default"].get()
+            if default == "NULL":
+                col_def += " DEFAULT NULL"
+            elif default == "CURRENT_TIMESTAMP":
+                col_def += " DEFAULT CURRENT_TIMESTAMP"
+            elif default == "As defined:":
+                default_val = col["default_value"].get()
+                if default_val:
+                    # Check if numeric or should be quoted
+                    if default_val.isdigit() or default_val.startswith("-") and default_val[1:].isdigit():
+                        col_def += f" DEFAULT {default_val}"
+                    else:
+                        col_def += f" DEFAULT '{default_val}'"
+            
+            # Add auto increment
+            if col["auto_increment"].get():
+                col_def += " AUTO_INCREMENT"
+            
+            column_defs.append(col_def)
+            
+            # Track keys and indexes
+            index_type = col["index"].get()
+            if index_type == "PRIMARY":
+                primary_keys.append(col_name)
+            elif index_type == "UNIQUE":
+                unique_keys.append(col_name)
+            elif index_type == "INDEX":
+                indexes.append(col_name)
+        
+        # Validate auto increment columns - ensure only one exists
+        if len(auto_increment_cols) > 1:
+            messagebox.showerror("Error", "Incorrect table definition; there can be only one auto column and it must be defined as a key")
+            return
+        
+        # Add primary key constraint as a composite key if multiple columns
+        if primary_keys:
+            column_defs.append(f"PRIMARY KEY ({', '.join(primary_keys)})")
+        
+        # Add unique constraints
+        for uk in unique_keys:
+            column_defs.append(f"UNIQUE KEY {uk}_unique ({uk})")
+        
+        # Add indexes
+        for idx in indexes:
+            column_defs.append(f"INDEX {idx}_idx ({idx})")
+        
+        # Generate the SQL command with proper formatting for readability
+        column_sql = ",\n  ".join(column_defs)
+        sql_command = f"CREATE TABLE {table_name} (\n  {column_sql}\n);"
+        
+        # Create SQL preview dialog
+        preview_dialog = tk.Toplevel(self.dialog)
+        preview_dialog.title("SQL Preview")
+        preview_dialog.geometry("650x350")
+        preview_dialog.transient(self.dialog)
+        preview_dialog.grab_set()
+        
+        # Add descriptive header
+        ttk.Label(preview_dialog, text="The following SQL command will be executed:", 
+                anchor="w").pack(fill="x", padx=10, pady=5)
+        
+        # Add SQL command in a scrollable text area
+        sql_text = scrolledtext.ScrolledText(preview_dialog, wrap=tk.WORD, height=12)
+        sql_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        sql_text.insert(tk.END, sql_command)
+        
+        # Make the text read-only
+        sql_text.config(state="disabled")
+        
+        # Add a copy button and close button
+        button_frame = ttk.Frame(preview_dialog)
+        button_frame.pack(fill="x", padx=10, pady=10)
+        
+        def copy_to_clipboard():
+            self.dialog.clipboard_clear()
+            self.dialog.clipboard_append(sql_command)
+            messagebox.showinfo("Copied", "SQL command copied to clipboard")
+        
+        ttk.Button(button_frame, text="Copy to Clipboard", 
+                command=copy_to_clipboard).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Close", 
+                command=preview_dialog.destroy).pack(side=tk.RIGHT, padx=5)

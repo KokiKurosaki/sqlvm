@@ -65,7 +65,44 @@ class SQLVM:
         auto_increment_cols = []
         indexes = {}
         
-        for coldef in columns_def.split(","):
+        # First, check for standalone PRIMARY KEY definition
+        primary_key_match = re.search(r'PRIMARY\s+KEY\s*\(([^)]+)\)', columns_def, re.I)
+        primary_key_columns = []
+        if primary_key_match:
+            # Get the columns in the PRIMARY KEY constraint
+            pk_cols_str = primary_key_match.group(1)
+            primary_key_columns = [col.strip() for col in pk_cols_str.split(',')]
+            
+            # Remove the PRIMARY KEY constraint from the column definitions
+            columns_def = columns_def.replace(primary_key_match.group(0), '')
+        
+        # Split columns, handling commas inside parentheses (for PRIMARY KEY definitions)
+        depth = 0
+        start = 0
+        col_defs = []
+        
+        for i, char in enumerate(columns_def):
+            if char == '(':
+                depth += 1
+            elif char == ')':
+                depth -= 1
+            elif char == ',' and depth == 0:
+                col_defs.append(columns_def[start:i].strip())
+                start = i + 1
+        
+        # Add the last column definition
+        if start < len(columns_def):
+            col_defs.append(columns_def[start:].strip())
+        
+        # Process each column definition
+        for coldef in col_defs:
+            if not coldef.strip():
+                continue
+                
+            # Check if this is a standalone PRIMARY KEY definition
+            if coldef.strip().upper().startswith('PRIMARY KEY'):
+                continue  # Skip, already handled above
+                
             # Parse column definition with regex to handle VARCHAR(n) and other types with parameters
             col_match = re.match(r'(\w+)\s+(\w+)(?:\((\d+)\))?(.*)$', coldef.strip(), re.I)
             
@@ -116,6 +153,11 @@ class SQLVM:
             if index_type:
                 indexes[col] = index_type
         
+        # Apply the standalone PRIMARY KEY constraint to the columns
+        for col in primary_key_columns:
+            if col in columns:
+                indexes[col] = "PRIMARY KEY"
+        
         return columns, types, auto_increment_cols, indexes
 
     def _convert_value(self, value, typ):
@@ -163,17 +205,16 @@ class SQLVM:
         if auto_increment_cols and auto_increment_cols[0] not in indexes:
             return "Error: Incorrect table definition; there can be only one auto column and it must be defined as a key"
             
-        # Validate indexes - check for multiple PRIMARY KEY definitions
+        # Validate indexes - A table can have only one primary key, but it can be a composite key
         primary_keys = [col for col, idx_type in indexes.items() if idx_type == "PRIMARY KEY"]
-        if len(primary_keys) > 1:
-            return f"Error: Multiple PRIMARY KEY definitions. A table can have only one primary key."
         
         self.tables[table_name] = {
             "columns": columns, 
             "types": types, 
             "rows": [],
             "auto_increment": {col: 0 for col in auto_increment_cols},
-            "indexes": indexes
+            "indexes": indexes,
+            "primary_key": primary_keys if primary_keys else None
         }
         
         # Format the column definitions for display
@@ -182,9 +223,18 @@ class SQLVM:
             col_def = f"{col} {types[col]}"
             if col in auto_increment_cols:
                 col_def += " AUTO_INCREMENT"
-            if col in indexes:
+            if col in indexes and indexes[col] != "PRIMARY KEY":
+                # Don't add PRIMARY KEY here as we'll display it separately for clarity
                 col_def += f" {indexes[col]}"
             col_defs.append(col_def)
+
+        # If we have primary keys, display them as a composite key if multiple
+        if primary_keys:
+            if len(primary_keys) > 1:
+                pk_def = f"PRIMARY KEY ({', '.join(primary_keys)})"
+            else:
+                pk_def = f"PRIMARY KEY ({primary_keys[0]})"
+            col_defs.append(pk_def)
             
         return f"Table {table_name} created with columns: {', '.join(col_defs)}."
 
@@ -400,13 +450,13 @@ class SQLVM:
         if columns == "*":
             columns = table["columns"]
         else:
+            # Parse columns more carefully to handle expressions
             columns = [col.strip() for col in columns.split(",")]
         
         # Filter rows based on WHERE condition if provided
         filtered_rows = []
         if where:
             # Pre-process the WHERE clause to handle complex conditions with parentheses
-            # This helps with proper evaluation of nested AND/OR expressions
             for row in table["rows"]:
                 if self._evaluate_condition(row, where):
                     filtered_rows.append(row)
@@ -509,6 +559,35 @@ class SQLVM:
         return message
 
     def execute_command(self, command):
+        command = command.strip()
+        
+        # Handle DROP TABLE command
+        if command.upper().startswith("DROP TABLE "):
+            try:
+                # Extract table name
+                table_name = command[len("DROP TABLE "):].strip().split()[0].strip(';').strip()
+                
+                # Check if the table exists
+                if table_name not in self.tables:
+                    return f"Error: Table '{table_name}' does not exist"
+                
+                # Remove the table from the current database
+                current_db = self.current_db
+                if current_db not in self.databases:
+                    return f"Error: No database selected"
+                
+                # Remove the table from the database structure
+                if table_name in self.databases[current_db]:
+                    del self.databases[current_db][table_name]
+                    # Also remove from the tables dictionary
+                    if table_name in self.tables:
+                        del self.tables[table_name]
+                    return f"Table '{table_name}' dropped"
+                else:
+                    return f"Error: Table '{table_name}' not found in database '{current_db}'"
+            except Exception as e:
+                return f"Error dropping table: {str(e)}"
+        
         # Clean up the command - remove extra whitespace, newlines, and trailing semicolon
         command = re.sub(r'\s+', ' ', command.strip().rstrip(";"))
         

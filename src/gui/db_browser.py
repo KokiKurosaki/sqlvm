@@ -252,9 +252,100 @@ class DatabaseBrowser:
                 context_menu.add_separator()
                 context_menu.add_command(label="Insert Row", 
                                          command=lambda: self.prepare_insert_row(db_name, table_name))
+                context_menu.add_separator()
+                context_menu.add_command(label=f"Drop Table '{table_name}'", 
+                                         command=lambda: self.drop_table(db_name, table_name),
+                                         foreground="red")
             
             # Display the menu
             context_menu.tk_popup(event.x_root, event.y_root)
+    
+    def drop_database(self, db_name):
+        if messagebox.askyesno("Confirm", f"Are you sure you want to drop database '{db_name}'?"):
+            result = self.sqlvm.drop_database(db_name)
+            self.main_app.set_status(result)
+            
+            if self.main_app.current_db == db_name:
+                self.main_app.current_db = None
+                self.main_app.current_table = None
+            
+            self.update_database_tree()
+            # Database is automatically saved by the monkey-patched drop_database method
+    
+    def drop_table(self, db_name, table_name):
+        """Drop a table after confirmation"""
+        if messagebox.askyesno("Confirm", f"Are you sure you want to drop table '{table_name}'?\nThis action cannot be undone!"):
+            try:
+                # Switch to the database if needed
+                if self.main_app.current_db != db_name:
+                    print(f"Switching from current database '{self.main_app.current_db}' to '{db_name}'")
+                    result = self.sqlvm.use_database(db_name)
+                    print(f"Database switch result: {result}")
+                    self.main_app.current_db = db_name
+                    
+                # Print the current tables in the database before deletion
+                print(f"Current tables in database '{db_name}': {list(self.sqlvm.databases.get(db_name, {}).keys())}")
+                
+                # Check if the table exists
+                if table_name not in self.sqlvm.databases.get(db_name, {}):
+                    messagebox.showerror("Error", f"Table '{table_name}' does not exist in database '{db_name}'")
+                    return
+                    
+                # Since SQLVM doesn't properly support DROP TABLE, use direct deletion
+                try:
+                    # First try the SQL command for future compatibility
+                    drop_command = f"DROP TABLE {table_name}"
+                    print(f"Executing command: {drop_command}")
+                    result = self.sqlvm.execute_command(drop_command)
+                    print(f"Drop result: {result}")
+                    
+                    # Regardless of SQL result, manually remove the table
+                    if table_name in self.sqlvm.databases.get(db_name, {}):
+                        print(f"Manual removal of table '{table_name}'")
+                        # Direct modification of the database structure
+                        del self.sqlvm.databases[db_name][table_name]
+                        print(f"Table '{table_name}' manually removed from database '{db_name}'")
+                        # Force save after direct modification
+                        self.save_database()
+                    
+                    # Clear references to the dropped table
+                    if self.main_app.current_table == table_name:
+                        self.main_app.current_table = None
+                        # Clear the structure and data tabs
+                        if hasattr(self.main_app, 'structure_tab') and self.main_app.structure_tab:
+                            for widget in self.main_app.structure_tab.structure_frame.winfo_children():
+                                widget.destroy()
+                            self.main_app.structure_tab.no_table_label = ttk.Label(
+                                self.main_app.structure_tab.structure_frame, 
+                                text="Select a table to view its structure."
+                            )
+                            self.main_app.structure_tab.no_table_label.pack(pady=20)
+                            
+                        if hasattr(self.main_app, 'data_tab') and self.main_app.data_tab:
+                            for widget in self.main_app.data_tab.data_frame.winfo_children():
+                                widget.destroy()
+                            self.main_app.data_tab.no_data_label = ttk.Label(
+                                self.main_app.data_tab.data_frame, 
+                                text="Select a table to view its data."
+                            )
+                            self.main_app.data_tab.no_data_label.pack(pady=20)
+                    
+                    # Success message regardless of SQL command result
+                    self.main_app.set_status(f"Table '{table_name}' dropped successfully")
+                    
+                    # Refresh the database tree view
+                    self.update_database_tree()
+                    
+                    # Also refresh any database dropdown menus
+                    self.main_app.refresh_all()
+                    
+                except Exception as e:
+                    print(f"Error during table drop: {e}")
+                    messagebox.showerror("Error", f"Failed to drop table: {str(e)}")
+                    
+            except Exception as e:
+                print(f"Exception in drop_table: {str(e)}")
+                messagebox.showerror("Error", f"An error occurred while dropping the table: {str(e)}")
     
     def create_database_dialog(self):
         # Create dialog
@@ -301,18 +392,6 @@ class DatabaseBrowser:
         table_dialog = CreateTableDialog(self.parent, self.main_app)
         
         # The dialog will update the database tree when a table is created
-    
-    def drop_database(self, db_name):
-        if messagebox.askyesno("Confirm", f"Are you sure you want to drop database '{db_name}'?"):
-            result = self.sqlvm.drop_database(db_name)
-            self.main_app.set_status(result)
-            
-            if self.main_app.current_db == db_name:
-                self.main_app.current_db = None
-                self.main_app.current_table = None
-            
-            self.update_database_tree()
-            # Database is automatically saved by the monkey-patched drop_database method
     
     def view_table_structure(self, db_name, table_name):
         # Switch to database if needed
