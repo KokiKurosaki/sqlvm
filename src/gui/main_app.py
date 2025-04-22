@@ -19,6 +19,18 @@ class SQLVMApp:
         self.root.title("SQLVM Manager")
         self.root.geometry("1200x800")
         
+        # Set app icon
+        self.icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'assets', 'quail.ico'))
+        try:
+            self.root.iconbitmap(self.icon_path)
+            # Make sure the window is treated as a normal application window
+            self.root.wm_attributes('-toolwindow', False)
+            # On Windows, ensure icon appears in taskbar
+            if os.name == 'nt':
+                self.root.wm_attributes('-topmost', False)
+        except tk.TclError as e:
+            print(f"Could not load icon: {e}")
+        
         # Initialize SQLVM instance
         self.sqlvm = SQLVM()
         

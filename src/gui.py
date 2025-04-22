@@ -11,6 +11,15 @@ class SQLGUI:
 
         # Set the background color of the root window
         self.root.configure(bg='black')
+        
+        # Try to load the app icon
+        self.icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'assets', 'quail.ico'))
+        try:
+            self.root.iconbitmap(self.icon_path)
+            # Ensure window is treated as a normal application window
+            self.root.wm_attributes('-toolwindow', False)
+        except tk.TclError as e:
+            print(f"Could not load icon: {e}")
 
         # Configure root layout for responsiveness
         self.root.columnconfigure(0, weight=1)

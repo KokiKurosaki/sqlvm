@@ -271,57 +271,31 @@ class SQLVM:
         table["rows"].append(new_row)
         return f"Inserted {display_values} into {table_name}."
 
-    def select(self, table_name, columns="*", where=None):
-        if self.current_db is None:
-            return "Error: No database selected. Use USE database_name;"
-        if table_name not in self.tables:
-            return f"Error: Table {table_name} does not exist."
-        table = self.tables[table_name]
-        if columns == "*":
-            columns = table["columns"]
-        else:
-            columns = [col.strip() for col in columns.split(",")]
-        
-        # Filter rows based on WHERE condition if provided
-        filtered_rows = []
-        if where:
-            for row in table["rows"]:
-                if self._evaluate_condition(row, where):
-                    filtered_rows.append(row)
-        else:
-            filtered_rows = table["rows"]
-        
-        # Calculate the maximum width for each column
-        widths = {col: len(col) for col in columns}
-        for row in filtered_rows:
-            for col in columns:
-                value_width = len(str(row.get(col, 'NULL')))
-                if col in widths:
-                    widths[col] = max(widths[col], value_width)
-        
-        # Format with clear column boundaries using vertical bars
-        header = "| " + " | ".join(col.ljust(widths[col]) for col in columns) + " |"
-        
-        # Create separator with + and - to clearly mark columns
-        separator = "+" + "+".join("-" * (widths[col] + 2) for col in columns) + "+"
-        
-        # Format the rows with vertical bars for alignment
-        formatted_rows = []
-        for row in filtered_rows:
-            formatted_row = "| " + " | ".join(str(row.get(col, 'NULL')).ljust(widths[col]) for col in columns) + " |"
-            formatted_rows.append(formatted_row)
-        
-        # Combine everything with clear boundaries
-        result = separator + "\n" + header + "\n" + separator + "\n"
-        if formatted_rows:
-            result += "\n".join(formatted_rows) + "\n" + separator
-        else:
-            result += separator  # Bottom line for empty result set
-            
-        return result
-
     def _evaluate_condition(self, row, condition):
-        # Handle various comparison operators: =, !=, <, >, <=, >=, LIKE, IN
+        """
+        Evaluate a WHERE condition against a row.
+        Now supports complex conditions with AND/OR operators.
+        """
+        # Handle complex conditions with AND
+        if " AND " in condition.upper():
+            parts = condition.split(" AND ", 1)  # Split at first AND
+            left_result = self._evaluate_condition(row, parts[0].strip())
+            right_result = self._evaluate_condition(row, parts[1].strip())
+            return left_result and right_result
+        
+        # Handle complex conditions with OR
+        if " OR " in condition.upper():
+            parts = condition.split(" OR ", 1)  # Split at first OR
+            left_result = self._evaluate_condition(row, parts[0].strip())
+            right_result = self._evaluate_condition(row, parts[1].strip())
+            return left_result or right_result
+        
+        # Handle parenthesized expressions
+        if condition.startswith('(') and condition.endswith(')'):
+            # Remove outer parentheses and evaluate inner expression
+            return self._evaluate_condition(row, condition[1:-1])
+        
+        # Handle standard comparison operators with improved parsing
         # Start with standard operators
         for operator in ["!=", "<=", ">=", "=", "<", ">"]:
             if operator in condition:
@@ -416,6 +390,57 @@ class SQLVM:
             return row.get(col) == value
         
         return False
+
+    def select(self, table_name, columns="*", where=None):
+        if self.current_db is None:
+            return "Error: No database selected. Use USE database_name;"
+        if table_name not in self.tables:
+            return f"Error: Table {table_name} does not exist."
+        table = self.tables[table_name]
+        if columns == "*":
+            columns = table["columns"]
+        else:
+            columns = [col.strip() for col in columns.split(",")]
+        
+        # Filter rows based on WHERE condition if provided
+        filtered_rows = []
+        if where:
+            # Pre-process the WHERE clause to handle complex conditions with parentheses
+            # This helps with proper evaluation of nested AND/OR expressions
+            for row in table["rows"]:
+                if self._evaluate_condition(row, where):
+                    filtered_rows.append(row)
+        else:
+            filtered_rows = table["rows"]
+        
+        # Calculate the maximum width for each column
+        widths = {col: len(col) for col in columns}
+        for row in filtered_rows:
+            for col in columns:
+                value_width = len(str(row.get(col, 'NULL')))
+                if col in widths:
+                    widths[col] = max(widths[col], value_width)
+        
+        # Format with clear column boundaries using vertical bars
+        header = "| " + " | ".join(col.ljust(widths[col]) for col in columns) + " |"
+        
+        # Create separator with + and - to clearly mark columns
+        separator = "+" + "+".join("-" * (widths[col] + 2) for col in columns) + "+"
+        
+        # Format the rows with vertical bars for alignment
+        formatted_rows = []
+        for row in filtered_rows:
+            formatted_row = "| " + " | ".join(str(row.get(col, 'NULL')).ljust(widths[col]) for col in columns) + " |"
+            formatted_rows.append(formatted_row)
+        
+        # Combine everything with clear boundaries
+        result = separator + "\n" + header + "\n" + separator + "\n"
+        if formatted_rows:
+            result += "\n".join(formatted_rows) + "\n" + separator
+        else:
+            result += separator  # Bottom line for empty result set
+            
+        return result
 
     def update(self, table_name, set_values, where=None):
         if self.current_db is None:
@@ -568,7 +593,7 @@ class SQLVM:
                 return self.insert(table_name, values, columns)
             
         elif cmd == "SELECT":
-            # Updated to handle WHERE clause
+            # Updated to handle WHERE clause with complex conditions
             match = re.match(r"SELECT (.+) FROM (\w+)(?:\s+WHERE\s+(.+))?", command, re.I)
             if match:
                 columns = match.group(1)
@@ -576,6 +601,7 @@ class SQLVM:
                 where = match.group(3)
                 return self.select(table_name, columns, where)
         elif cmd == "UPDATE":
+            # Allow complex WHERE clauses with AND/OR
             match = re.match(r"UPDATE (\w+) SET (.+) WHERE (.+)", command)
             if match:
                 table_name = match.group(1)
@@ -583,6 +609,7 @@ class SQLVM:
                 where = match.group(3)
                 return self.update(table_name, set_values, where)
         elif cmd == "DELETE":
+            # Allow complex WHERE clauses with AND/OR
             match = re.match(r"DELETE FROM (\w+) WHERE (.+)", command)
             if match:
                 table_name = match.group(1)

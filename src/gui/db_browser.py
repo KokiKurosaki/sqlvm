@@ -33,6 +33,9 @@ class DatabaseBrowser:
             
         # Monkey patch SQLVM methods to add auto-save
         self._setup_auto_save()
+        
+        # Try to set the icon for any dialogs we create
+        self.icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'assets', 'quail.ico'))
             
         self.setup_tree()
         self.setup_toolbar()
@@ -260,6 +263,14 @@ class DatabaseBrowser:
         dialog.geometry("300x120")
         dialog.transient(self.parent)
         dialog.grab_set()
+        
+        # Try to set the icon for the dialog
+        if os.path.exists(self.icon_path):
+            try:
+                dialog.iconbitmap(self.icon_path)
+                dialog.wm_attributes('-toolwindow', False)
+            except tk.TclError as e:
+                print(f"Could not set dialog icon: {e}")
         
         ttk.Label(dialog, text="Database Name:").pack(pady=5)
         db_name_var = tk.StringVar()

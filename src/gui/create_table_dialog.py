@@ -12,12 +12,12 @@ class CreateTableDialog:
         # Create dialog
         self.dialog = tk.Toplevel(self.parent)
         self.dialog.title("Create New Table")
-        self.dialog.geometry("800x600")
+        self.dialog.geometry("750x600")
         self.dialog.transient(self.parent)
         self.dialog.grab_set()
         
         # Make dialog resizable
-        self.dialog.minsize(800, 600)
+        self.dialog.minsize(750, 600)
         self.dialog.columnconfigure(0, weight=1)
         self.dialog.rowconfigure(1, weight=1)
         
@@ -76,8 +76,9 @@ class CreateTableDialog:
         header_frame = ttk.Frame(self.scroll_frame)
         header_frame.grid(row=0, column=0, sticky="ew")
         
+        # Removed "Comments" column and rebalanced column widths
         headers = ["Name", "Type", "Length/Values", "Default", "Collation", 
-                  "Attributes", "Null", "Index", "A_I", "Comments"]
+                  "Attributes", "Null", "Index", "A_I"]
         
         for i, header in enumerate(headers):
             ttk.Label(header_frame, text=header, font=("", 9, "bold")).grid(row=0, column=i, padx=5, pady=2)
@@ -118,15 +119,18 @@ class CreateTableDialog:
             for i in range(target_count, current_count):
                 # Remove the last frame
                 frame_to_remove = self.column_frames.pop()
-                frame_to_remove.destroy()
-        
-        # Update scroll region
+                frame_to_remove["frame"].destroy()  # Destroy the frame widget
+                # Update scroll region
         self.on_frame_configure()
     
     def add_column_frame(self, index):
         """Add a column definition frame"""
         column_frame = ttk.Frame(self.scroll_frame)
         column_frame.grid(row=index, column=0, sticky="ew", pady=2)
+        
+        # Apply alternating row colors for better readability
+        bg_color = "#f0f0f0" if index % 2 == 0 else "#ffffff"
+        column_frame.configure(style=f"Row{index}.TFrame")
         
         # Name field
         name_var = tk.StringVar(value=f"column{index}")
@@ -135,7 +139,7 @@ class CreateTableDialog:
         
         # Type dropdown
         type_var = tk.StringVar(value="INT")
-        types = ["INT", "VARCHAR", "TEXT", "DATETIME", "DATE", "FLOAT", "DOUBLE", "BOOLEAN", "BLOB"]
+        types = ["INT", "VARCHAR", "TEXT", "CHAR", "FLOAT", "BOOL"]
         type_dropdown = ttk.Combobox(column_frame, textvariable=type_var, values=types, width=10, state="readonly")
         type_dropdown.grid(row=0, column=1, padx=2, pady=2)
         
@@ -191,12 +195,7 @@ class CreateTableDialog:
         ai_check = ttk.Checkbutton(column_frame, variable=ai_var)
         ai_check.grid(row=0, column=9, padx=2, pady=2)
         
-        # Comments field
-        comment_var = tk.StringVar()
-        comment_entry = ttk.Entry(column_frame, textvariable=comment_var, width=20)
-        comment_entry.grid(row=0, column=10, padx=2, pady=2)
-        
-        # Store column data in a dictionary
+        # Store column data in a dictionary - removed comment field
         column_data = {
             "frame": column_frame,
             "name": name_var,
@@ -208,8 +207,7 @@ class CreateTableDialog:
             "attributes": attr_var,
             "null": null_var,
             "index": index_var,
-            "auto_increment": ai_var,
-            "comment": comment_var
+            "auto_increment": ai_var
         }
         
         # Add to list of columns
@@ -224,11 +222,17 @@ class CreateTableDialog:
                 length_var.set("11")
             elif selected_type == "VARCHAR":
                 length_var.set("255")
-            elif selected_type in ["TEXT", "BLOB"]:
+            elif selected_type == "CHAR":
+                length_var.set("50")
+            elif selected_type in ["TEXT"]:
+                length_var.set("")
+            elif selected_type == "FLOAT":
+                length_var.set("")
+            elif selected_type == "BOOL":
                 length_var.set("")
             
             # Update auto increment availability
-            if selected_type in ["INT", "BIGINT", "SMALLINT", "TINYINT"]:
+            if selected_type in ["INT"]:
                 ai_check.state(['!disabled'])
             else:
                 ai_var.set(False)
@@ -242,7 +246,7 @@ class CreateTableDialog:
                 collation_dropdown.state(['disabled'])
             
             # Update attributes availability
-            if selected_type in ["INT", "FLOAT", "DOUBLE", "DECIMAL"]:
+            if selected_type in ["INT", "FLOAT"]:
                 attr_dropdown.state(['!disabled'])
             else:
                 attr_var.set("")
@@ -322,11 +326,6 @@ class CreateTableDialog:
             # Add auto increment
             if col["auto_increment"].get():
                 col_def += " AUTO_INCREMENT"
-            
-            # Add comment if specified
-            comment = col["comment"].get().strip()
-            if comment:
-                col_def += f" COMMENT '{comment}'"
             
             column_defs.append(col_def)
             
