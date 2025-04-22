@@ -473,6 +473,70 @@ class SQLVMImporter:
         return f"Error executing: {cmd_first_line}\n{error_msg}"
 
     @staticmethod
+    def validate_sql_file(file_path):
+        """
+        Validate an SQL file and return information about its structure
+        
+        Args:
+            file_path: Path to the SQL file to validate
+            
+        Returns:
+            Dict with validation info
+        """
+        try:
+            with open(file_path, 'r') as sql_file:
+                sql_content = sql_file.read()
+            
+            # Remove comments
+            sql_content = re.sub(r'--.*?\n', '\n', sql_content)
+            sql_content = re.sub(r'/\*.*?\*/', '', sql_content, flags=re.DOTALL)
+            
+            # Find all commands by splitting on semicolons (simplistic approach)
+            raw_commands = [cmd.strip() for cmd in sql_content.split(";") if cmd.strip()]
+            
+            # Check for common SQL statements
+            stats = {
+                "total_commands": len(raw_commands),
+                "create_database": 0,
+                "create_table": 0,
+                "insert": 0,
+                "other": 0,
+                "problematic": []
+            }
+            
+            for cmd in raw_commands:
+                cmd_upper = cmd.upper()
+                if "CREATE DATABASE" in cmd_upper or "CREATE SCHEMA" in cmd_upper:
+                    stats["create_database"] += 1
+                elif "CREATE TABLE" in cmd_upper:
+                    stats["create_table"] += 1
+                elif "INSERT" in cmd_upper:
+                    stats["insert"] += 1
+                else:
+                    stats["other"] += 1
+                
+                # Check for potential issues
+                if "FOREIGN KEY" in cmd_upper or "CONSTRAINT" in cmd_upper:
+                    stats["problematic"].append("Command contains FOREIGN KEY or CONSTRAINT which may not be supported")
+                elif "TRIGGER" in cmd_upper:
+                    stats["problematic"].append("Command contains TRIGGER which is not supported")
+                elif "PROCEDURE" in cmd_upper or "FUNCTION" in cmd_upper:
+                    stats["problematic"].append("Command contains PROCEDURE or FUNCTION which is not supported")
+            
+            return {
+                "valid": True,
+                "stats": stats,
+                "file_size": os.path.getsize(file_path),
+                "file_name": os.path.basename(file_path),
+                "issues": stats["problematic"][:5]  # Return first 5 issues
+            }
+        except Exception as e:
+            return {
+                "valid": False,
+                "error": str(e)
+            }
+
+    @staticmethod
     def import_from_json(vm, db_name, file_path):
         """
         Import JSON file into a specified database
