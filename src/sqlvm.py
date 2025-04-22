@@ -558,6 +558,36 @@ class SQLVM:
         message, _ = SQLVMExporter.export_to_json(self, db_name, file_path)
         return message
 
+    def import_from_sql(self, db_name, file_path):
+        """
+        Import SQL file into a database
+        
+        Args:
+            db_name: Target database to import into
+            file_path: Path to the SQL file
+            
+        Returns:
+            Success message
+        """
+        from .importer import SQLVMImporter
+        message, _, _ = SQLVMImporter.import_from_sql(self, db_name, file_path)
+        return message
+
+    def import_from_json(self, db_name, file_path):
+        """
+        Import JSON file into a database
+        
+        Args:
+            db_name: Target database to import into
+            file_path: Path to the JSON file
+            
+        Returns:
+            Success message
+        """
+        from .importer import SQLVMImporter
+        message, _, _ = SQLVMImporter.import_from_json(self, db_name, file_path)
+        return message
+
     def execute_command(self, command):
         command = command.strip()
         
@@ -720,5 +750,20 @@ class SQLVM:
             if match_export_all_json:
                 file_path = match_export_all_json.group(1).strip() if match_export_all_json.group(1) else None
                 return self.export_to_json(None, file_path)
+                
+        elif cmd == "IMPORT":
+            # IMPORT DATABASE db_name FROM SQL file_path
+            match_import_sql = re.match(r"IMPORT DATABASE (\w+) FROM SQL(?:\s+(.+))?", command, re.I)
+            if match_import_sql:
+                db_name = match_import_sql.group(1)
+                file_path = match_import_sql.group(2).strip() if match_import_sql.group(2) else None
+                return self.import_from_sql(db_name, file_path)
+                
+            # IMPORT DATABASE db_name FROM JSON file_path
+            match_import_json = re.match(r"IMPORT DATABASE (\w+) FROM JSON(?:\s+(.+))?", command, re.I)
+            if match_import_json:
+                db_name = match_import_json.group(1)
+                file_path = match_import_json.group(2).strip() if match_import_json.group(2) else None
+                return self.import_from_json(db_name, file_path)
                 
         return "Error: Invalid command."

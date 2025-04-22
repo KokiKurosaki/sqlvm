@@ -49,8 +49,14 @@ class QueryTab:
         self.sql_query_frame = ttk.Frame(self.query_notebook)
         self.query_notebook.add(self.sql_query_frame, text="Raw SQL")
         
+        # SQL editor frame with help button
+        editor_frame = ttk.Frame(self.sql_query_frame)
+        editor_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(editor_frame, text="SQL Query:").pack(side=tk.LEFT, padx=5)
+        ttk.Button(editor_frame, text="Help", command=self.show_help).pack(side=tk.RIGHT, padx=5)
+        
         # SQL editor
-        ttk.Label(self.sql_query_frame, text="SQL Query:").pack(anchor=tk.W, padx=5, pady=5)
         self.query_editor = scrolledtext.ScrolledText(self.sql_query_frame, height=10)
         self.query_editor.pack(fill=tk.X, padx=5, pady=5)
         
@@ -64,6 +70,37 @@ class QueryTab:
         # Results text area
         self.query_results = scrolledtext.ScrolledText(results_frame)
         self.query_results.pack(fill=tk.BOTH, expand=True)
+    
+    def show_help(self):
+        help_text = (
+            "SQLVM Help:\n\n"
+            "Database Operations:\n"
+            "- CREATE DATABASE database_name;\n"
+            "- DROP DATABASE [IF EXISTS] database_name;\n"
+            "- USE database_name;\n"
+            "- SHOW DATABASES;\n"
+            "- SHOW TABLES;\n\n"
+            "Table Operations:\n"
+            "- CREATE TABLE table_name (\n"
+            "    id INT AUTO_INCREMENT PRIMARY KEY,\n"
+            "    name VARCHAR(255),\n"
+            "    age INT\n"
+            "  );\n\n"
+            "Data Operations:\n"
+            "- INSERT INTO table_name VALUES (val1, val2, ...);\n"
+            "- INSERT INTO table_name (col1, col2) VALUES (val1, val2);\n"
+            "- SELECT * FROM table_name;\n"
+            "- SELECT col1, col2 FROM table_name;\n"
+            "- UPDATE table_name SET col=value WHERE condition;\n"
+            "- DELETE FROM table_name WHERE condition;\n\n"
+            "Export Operations:\n"
+            "- EXPORT DATABASE db_name TO SQL [file_path];\n"
+            "- EXPORT DATABASE db_name TO JSON [file_path];\n"
+            "- EXPORT ALL TO SQL [file_path];\n"
+            "- EXPORT ALL TO JSON [file_path];\n\n"
+            "Note: For VARCHAR type, always specify length like VARCHAR(255)"
+        )
+        messagebox.showinfo("Help", help_text)
     
     def execute_query(self):
         query = self.query_editor.get("1.0", tk.END).strip()
