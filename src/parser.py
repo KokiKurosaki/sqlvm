@@ -27,6 +27,14 @@ class SQLParser:
                 condition_column = match_where_in.group(3)
                 subquery = match_where_in.group(4)
                 return [("SELECT_ROWS", table_name, columns, f"{condition_column} IN ({subquery})")]
+            
+            # Match SELECT queries with a WHERE clause
+            match_where = re.match(r"SELECT (.+) FROM (\w+) WHERE (.+)", original_command, re.I)
+            if match_where:
+                columns = match_where.group(1)
+                table_name = match_where.group(2)
+                where_clause = match_where.group(3)
+                return [("SELECT_ROWS", table_name, columns, where_clause)]
 
             # Match SELECT queries with static IN values
             match_where_in_static = re.match(r"SELECT (.+) FROM (\w+) WHERE (.+) IN \((.*)\)", original_command, re.I)

@@ -12,7 +12,7 @@ class SQLVM:
         self.vm = SQLVMInterpreter(self)
 
     def create_database(self, db_name):
-        if db_name in self.databases:
+        if (db_name in self.databases):
             return f"Error: Database {db_name} already exists."
         self.databases[db_name] = {}
         return f"Database {db_name} created."
@@ -277,43 +277,48 @@ class SQLVM:
         return f"Inserted {display_values} into {table_name}."
 
     def select(self, table_name, columns="*"):
-        if (self.current_db is None):
+        print(f"DEBUG: select called with table_name={table_name}, columns={columns}, where={where}")
+        if self.current_db is None:
             return "Error: No database selected. Use USE database_name;"
-        if (table_name not in self.tables):
+        if table_name not in self.tables:
             return f"Error: Table {table_name} does not exist."
         table = self.tables[table_name]
-        if (columns == "*"):
+        if columns == "*":
             columns = table["columns"]
         else:
             columns = [col.strip() for col in columns.split(",")]
-        
+
         # Calculate the maximum width for each column
         widths = {col: len(col) for col in columns}
-        for row in table["rows"]:
+        filtered_rows = table["rows"]
+
+        # Handle WHERE clause
+        if where:
+            print(f"DEBUG: WHERE clause detected: {where}")
+            filtered_rows = [row for row in table["rows"] if self._evaluate_condition(row, where)]
+
+        # Adjust column widths based on the filtered rows
+        for row in filtered_rows:
             for col in columns:
                 value_width = len(str(row.get(col, 'NULL')))
-                if (col in widths):
+                if col in widths:
                     widths[col] = max(widths[col], value_width)
-        
+
         # Format with clear column boundaries using vertical bars
         header = "| " + " | ".join(col.ljust(widths[col]) for col in columns) + " |"
-        
-        # Create separator with + and - to clearly mark columns
         separator = "+" + "+".join("-" * (widths[col] + 2) for col in columns) + "+"
-        
-        # Format the rows with vertical bars for alignment
         formatted_rows = []
-        for row in table["rows"]:
+        for row in filtered_rows:
             formatted_row = "| " + " | ".join(str(row.get(col, 'NULL')).ljust(widths[col]) for col in columns) + " |"
             formatted_rows.append(formatted_row)
-        
+
         # Combine everything with clear boundaries
         result = separator + "\n" + header + "\n" + separator + "\n"
-        if (formatted_rows):
+        if formatted_rows:
             result += "\n".join(formatted_rows) + "\n" + separator
         else:
             result += separator  # Bottom line for empty result set
-            
+
         return result
 
     def select(self, table_name, columns="*", where=None):
@@ -433,19 +438,32 @@ class SQLVM:
         return f"Deleted {deleted_count} row/s from {table_name}."
 
     def _evaluate_condition(self, row, condition):
-        col, value = condition.split("=")
-        col = col.strip()
-        value = value.strip().strip('"')
+        # Strip any trailing semicolons
+        condition = condition.strip(";").strip()
+
+        # Split the condition into column and value
+        if "=" in condition:
+            col, value = condition.split("=")
+            col = col.strip()
+            value = value.strip().strip('"').strip("'")
+        else:
+            return False  # Unsupported condition format
+
+        # Get the column type from the table schema
         typ = None
         for table in self.tables.values():
-            if ("types" in table and col in table["types"]):
+            if "types" in table and col in table["types"]:
                 typ = table["types"][col]
                 break
-        if (typ):
+
+        # Convert the value to the appropriate type
+        if typ:
             try:
                 value = self._convert_value(value, typ)
             except Exception:
                 pass
+
+        # Compare the row's column value with the condition value
         return row.get(col) == value
 
     def export_to_sql(self, db_name=None, file_path=None):
