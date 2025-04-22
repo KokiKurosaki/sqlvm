@@ -9,6 +9,11 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     from src.sqlvm import SQLVM
     from src.gui import SQLGUI
+    
+    # Check if assets directory exists
+    assets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets')
+    if not os.path.exists(assets_dir):
+        os.makedirs(assets_dir)
 else:
     # When imported as part of the package, use relative imports
     from .sqlvm import SQLVM
@@ -24,11 +29,18 @@ def main():
     root.geometry("1000x700")
     root.minsize(800, 600)
     
-    # Set app icon if available
-    try:
-        root.iconbitmap("sql_icon.ico")
-    except tk.TclError:
-        pass
+    # Set app icon using the quail.ico file
+    icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'assets', 'quail.ico'))
+    if os.path.exists(icon_path):
+        try:
+            root.iconbitmap(icon_path)
+            # Ensure window is treated as a normal application window, not a tool window
+            root.wm_attributes('-toolwindow', False)
+            print(f"Loaded icon from: {icon_path}")
+        except tk.TclError as e:
+            print(f"Could not load icon: {e}")
+    else:
+        print(f"Icon file not found at: {icon_path}")
         
     # Initialize the GUI with our VM
     app = SQLGUI(root, vm)
